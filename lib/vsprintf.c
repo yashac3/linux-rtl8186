@@ -1477,7 +1477,7 @@ char *uuid_string(char *buf, char *end, const u8 *addr,
 
 int kptr_restrict __read_mostly;
 
-static noinline_for_stack
+static __always_unused noinline_for_stack
 char *restricted_pointer(char *buf, char *end, const void *ptr,
 			 struct printf_spec spec)
 {
@@ -2043,7 +2043,7 @@ char *pointer(const char *fmt, char *buf, char *end, void *ptr,
 	case 'K':
 		if (!kptr_restrict)
 			break;
-		return restricted_pointer(buf, end, ptr, spec);
+		return pointer_string(buf, end, ptr, spec);
 	case 'N':
 		return netdev_bits(buf, end, ptr, spec, fmt);
 	case 'a':
@@ -2076,7 +2076,7 @@ char *pointer(const char *fmt, char *buf, char *end, void *ptr,
 	}
 
 	/* default is to _not_ leak addresses, hash before printing */
-	return ptr_to_id(buf, end, ptr, spec);
+	return pointer_string(buf, end, ptr, spec);
 }
 
 /*
