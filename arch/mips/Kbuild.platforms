@@ -27,6 +27,7 @@ platforms += pmcs-msp71xx
 platforms += pnx833x
 platforms += ralink
 platforms += rb532
+platforms += rtl8186
 platforms += sgi-ip22
 platforms += sgi-ip27
 platforms += sgi-ip32

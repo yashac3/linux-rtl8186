@@ -354,6 +354,23 @@ config MACH_DECSTATION
 
 	  otherwise choose R3000.
 
+config MACH_RTL8186
+	bool "Realtek RTL8186 SoC"
+	select SYS_SUPPORTS_BIG_ENDIAN
+	select SYS_SUPPORTS_32BIT_KERNEL
+	select SYS_HAS_CPU_LX5280
+	select DMA_NONCOHERENT
+	select SYS_SUPPORTS_ZBOOT_UART16550
+	select SYS_HAS_EARLY_PRINTK
+	select USE_GENERIC_EARLY_PRINTK_8250
+	select USE_OF
+	select COMMON_CLK
+	select RTL8186_IRQ
+	select RTL8186_TIMER
+	select BUILTIN_DTB
+	help
+	  Realtek RTL8186 SoC support.
+
 config MACH_JAZZ
 	bool "Jazz family of machines"
 	select ARCH_MIGHT_HAVE_PC_PARPORT

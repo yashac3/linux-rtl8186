@@ -1,0 +1,86 @@
+// SPDX-License-Identifier: GPL-2.0
+/ {
+	#address-cells = <1>;
+	#size-cells = <1>;
+	compatible = "realtek,rtl8186-soc";
+
+	interrupt-parent = <&intc>;
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		cpu@0 {
+			device_type = "cpu";
+			compatible = "lexra,lx5280";
+			reg = <0>;
+			clocks = <&cpu_clk>;
+			d-cache-size = <8192>;
+			i-cache-size = <8192>;
+			d-cache-line-size = <16>;
+			i-cache-line-size = <16>;
+			tlb-entries = <16>;
+		};
+	};
+
+	cpu_clk: cpu_clk {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <180000000>; /* Stub. Varies with boards */
+	};
+
+	sysclk: sysclk {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <22000000>; /* 22MHz */
+	};
+
+	soc {
+		compatible = "simple-bus";
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges = <0 0x1d010000 0x1000>;
+
+		intc: interrupt-controller@1d010000 {
+			compatible = "realtek,rtl8186-intc";
+
+			interrupt-controller;
+			#interrupt-cells = <1>;
+
+			reg = <0x0 0x8>;
+		};
+
+		timer {
+			compatible = "realtek,rtl8186-timer";
+			interrupts = <0>;
+			clocks = <&sysclk>;
+
+			reg = <0x50 0x30>;
+		};
+
+		uart0: serial@1d0100c3 {
+			compatible = "ns16550a";
+			reg = <0xc3 0x20>;
+			reg-io-width = <1>;
+			reg-shift = <2>;
+			interrupts = <3>;
+			clocks = <&cpu_clk>;
+			fifo-size = <16>;
+
+			status = "disabled";
+		};
+
+		uart1: serial@1d0100e3 {
+			compatible = "ns16550a";
+			reg = <0xe3 0x20>;
+			reg-io-width = <1>;
+			reg-shift = <2>;
+			interrupts = <3>;
+			clocks = <&cpu_clk>;
+			fifo-size = <16>;
+
+			status = "disabled";
+		};
+	};
+};
+
