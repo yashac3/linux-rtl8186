@@ -634,4 +634,12 @@ config GX6605S_TIMER
 	help
 	  This option enables support for gx6605s SOC's timer.
 
+config RTL8186_TIMER
+	bool "RTL8186 timer driver" if COMPILE_TEST
+	depends on HAS_IOMEM
+	select TIMER_OF
+	select CLKSRC_MMIO
+	help
+	  Enables support for the RTL8186 timer driver.
+
 endmenu
