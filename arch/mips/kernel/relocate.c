@@ -268,18 +268,17 @@ static inline void __init *determine_relocation_address(void)
 	return RELOCATED(dest);
 }
 
-#else
+#else  /* !CONFIG_RANDOMIZE_BASE */
 
 static inline void __init *determine_relocation_address(void)
 {
 	/*
-	 * Choose a new address for the kernel
-	 * For now we'll hard code the destination
+	 * CONFIG_RANDOMIZE_BASE is disabled. Don't relocate.
 	 */
-	return (void *)0xffffffff81000000;
+	return (void *)&_text;
 }
 
-#endif
+#endif /* !CONFIG_RANDOMIZE_BASE */
 
 static inline int __init relocation_addr_valid(void *loc_new)
 {
