@@ -105,6 +105,10 @@ static inline int __pure __get_cpu_type(const int cpu_type)
 	case CPU_TX3927:
 #endif
 
+#ifdef CONFIG_SYS_HAS_CPU_LX5280
+	case CPU_LX5280:
+#endif
+
 #ifdef CONFIG_SYS_HAS_CPU_VR41XX
 	case CPU_VR41XX:
 	case CPU_VR4111:

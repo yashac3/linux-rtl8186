@@ -1580,6 +1580,17 @@ config CPU_R3000
 	  might be a safe bet.  If the resulting kernel does not work,
 	  try to recompile with R3000.
 
+config CPU_LX5280
+	bool "LX5280"
+	depends on SYS_HAS_CPU_LX5280
+	select CPU_SUPPORTS_32BIT_KERNEL
+	help
+	  Choose this option to build a kernel for the Lexra LX5280 CPU.
+	  Lexra LX5280 implements the MIPS-I instruction set, without
+	  unaligned load and store instructions (lwl, lwr, swl, swr).
+	  Only LX5280 CPUs with a TLB unit are supported.
+
+
 config CPU_TX39XX
 	bool "R39XX"
 	depends on SYS_HAS_CPU_TX39XX
@@ -1962,6 +1973,9 @@ config SYS_HAS_CPU_R3000
 config SYS_HAS_CPU_TX39XX
 	bool
 
+config SYS_HAS_CPU_LX5280
+	bool
+
 config SYS_HAS_CPU_VR41XX
 	bool
 
@@ -2196,7 +2210,7 @@ config PAGE_SIZE_8KB
 
 config PAGE_SIZE_16KB
 	bool "16kB"
-	depends on !CPU_R3000 && !CPU_TX39XX
+	depends on !CPU_R3000 && !CPU_TX39XX && !CPU_LX5280
 	help
 	  Using 16kB page size will result in higher performance kernel at
 	  the price of higher memory consumption.  This option is available on
@@ -2215,7 +2229,7 @@ config PAGE_SIZE_32KB
 
 config PAGE_SIZE_64KB
 	bool "64kB"
-	depends on !CPU_R3000 && !CPU_TX39XX
+	depends on !CPU_R3000 && !CPU_TX39XX && !CPU_LX5280
 	help
 	  Using 64kB page size will result in higher performance kernel at
 	  the price of higher memory consumption.  This option is available on
@@ -2283,7 +2297,7 @@ config CPU_HAS_PREFETCH
 
 config CPU_GENERIC_DUMP_TLB
 	bool
-	default y if !(CPU_R3000 || CPU_R8000 || CPU_TX39XX)
+	default y if !(CPU_R3000 || CPU_R8000 || CPU_TX39XX || CPU_LX5280)
 
 config MIPS_FP_SUPPORT
 	bool "Floating Point support" if EXPERT
@@ -2303,7 +2317,7 @@ config MIPS_FP_SUPPORT
 config CPU_R2300_FPU
 	bool
 	depends on MIPS_FP_SUPPORT
-	default y if CPU_R3000 || CPU_TX39XX
+	default y if CPU_R3000 || CPU_TX39XX || CPU_LX5280
 
 config CPU_R4K_FPU
 	bool
@@ -2312,7 +2326,7 @@ config CPU_R4K_FPU
 
 config CPU_R4K_CACHE_TLB
 	bool
-	default y if !(CPU_R3000 || CPU_R8000 || CPU_SB1 || CPU_TX39XX || CPU_CAVIUM_OCTEON)
+	default y if !(CPU_R3000 || CPU_R8000 || CPU_SB1 || CPU_TX39XX || CPU_CAVIUM_OCTEON || CPU_LX5280)
 
 config MIPS_MT_SMP
 	bool "MIPS MT SMP support (1 TC on each available VPE)"
@@ -2551,7 +2565,7 @@ config CPU_MIPSR2_IRQ_EI
 
 config CPU_HAS_SYNC
 	bool
-	depends on !CPU_R3000
+	depends on !(CPU_R3000 || CPU_LX5280)
 	default y
 
 #
@@ -2569,14 +2583,14 @@ config CPU_R4400_WORKAROUNDS
 
 config MIPS_ASID_SHIFT
 	int
-	default 6 if CPU_R3000 || CPU_TX39XX
+	default 6 if CPU_R3000 || CPU_TX39XX || CPU_LX5280
 	default 4 if CPU_R8000
 	default 0
 
 config MIPS_ASID_BITS
 	int
 	default 0 if MIPS_ASID_BITS_VARIABLE
-	default 6 if CPU_R3000 || CPU_TX39XX
+	default 6 if CPU_R3000 || CPU_TX39XX || CPU_LX5280
 	default 8
 
 config MIPS_ASID_BITS_VARIABLE

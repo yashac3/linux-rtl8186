@@ -84,6 +84,7 @@
 #define CP0_WATCHLO $18
 #define CP0_WATCHHI $19
 #define CP0_XCONTEXT $20
+#define CP0_LX5280_CCTL $20
 #define CP0_FRAMEMASK $21
 #define CP0_DIAGNOSTIC $22
 #define CP0_DEBUG $23
@@ -564,6 +565,12 @@
 #define MIPS_CONF_AR		(_ULCAST_(7) << 10)
 #define MIPS_CONF_AT		(_ULCAST_(3) << 13)
 #define MIPS_CONF_M		(_ULCAST_(1) << 31)
+
+/* Bits specific to the Lexra LX5280 CPU. */
+#define LX5280_CCTL_DINVAL		(_ULCAST_(1) << 0)
+#define LX5280_CCTL_IINVAL		(_ULCAST_(1) << 1)
+#define LX5280_CCTL_IMEMFILL		(_ULCAST_(1) << 4)
+#define LX5280_CCTL_IMEMOFF		(_ULCAST_(1) << 5)
 
 /*
  * Bits in the MIPS32/64 PRA coprocessor 0 config registers 1 and above.
@@ -1743,6 +1750,9 @@ do {									\
 
 #define read_c0_xcontext()	__read_ulong_c0_register($20, 0)
 #define write_c0_xcontext(val)	__write_ulong_c0_register($20, 0, val)
+
+#define read_c0_lx5280_cctl()	__read_ulong_c0_register($20, 0)
+#define write_c0_lx5280_cctl(val)	__write_ulong_c0_register($20, 0, val)
 
 #define read_c0_intcontrol()	__read_32bit_c0_ctrl_register($20)
 #define write_c0_intcontrol(val) __write_32bit_c0_ctrl_register($20, val)

@@ -165,7 +165,8 @@ NESTED(handle_int, PT_SIZE, sp)
 	.set	push
 	.set	noat
 	mfc0	k0, CP0_STATUS
-#if defined(CONFIG_CPU_R3000) || defined(CONFIG_CPU_TX39XX)
+#if defined(CONFIG_CPU_R3000) || defined(CONFIG_CPU_TX39XX) || \
+	defined(CONFIG_CPU_LX5280)
 	and	k0, ST0_IEP
 	bnez	k0, 1f
 
@@ -632,7 +633,8 @@ isrdhwr:
 	get_saved_sp	/* k1 := current_thread_info */
 	.set	noreorder
 	MFC0	k0, CP0_EPC
-#if defined(CONFIG_CPU_R3000) || defined(CONFIG_CPU_TX39XX)
+#if defined(CONFIG_CPU_R3000) || defined(CONFIG_CPU_TX39XX) || \
+	defined(CONFIG_CPU_LX5280)
 	ori	k1, _THREAD_MASK
 	xori	k1, _THREAD_MASK
 	LONG_L	v1, TI_TP_VALUE(k1)

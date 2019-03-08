@@ -687,6 +687,48 @@ static int simulate_rdhwr_mm(struct pt_regs *regs, unsigned int opcode)
 	return -1;
 }
 
+/*
+ * When most MIPS CPUs hit 'rdwhr' instruction, they raise a 'reserved
+ * instruction' exception if the instruction is unsupported.
+ * This is not the case with the LX5280 CPU, on which
+ * 'rdhwr' instruction raises a page fault.
+ * So for LX5280, we must do the 'rdhwr' simulation in the
+ * page fault handler.
+ *
+ * Returns 0 on successful simulation.
+ * Register state is not affected on failure.
+ */
+int simulate_rdhwr_in_page_fault(struct pt_regs *regs)
+{
+#ifdef CONFIG_CPU_LX5280
+	unsigned long old_epc = regs->cp0_epc;
+	unsigned long old31 = regs->regs[31];
+	unsigned int opcode = 0;
+	unsigned int __user *epc;
+
+	if (get_isa16_mode(regs->cp0_epc))
+		goto err;
+
+	epc = (unsigned int __user *)exception_epc(regs);
+	if (unlikely(get_user(opcode, epc)))
+		goto err;
+
+	if (unlikely(compute_return_epc(regs) < 0))
+		goto err;
+
+	if (!simulate_rdhwr_normal(regs, opcode))
+		return 0;  /* Success */
+
+err:
+	regs->cp0_epc = old_epc;		/* Undo skip-over.  */
+	regs->regs[31] = old31;
+
+	return -1;
+#else /* !CONFIG_CPU_LX5280 */
+	return -1;
+#endif
+}
+
 static int simulate_sync(struct pt_regs *regs, unsigned int opcode)
 {
 	if ((opcode & OPCODE) == SPEC0 && (opcode & FUNC) == SYNC) {

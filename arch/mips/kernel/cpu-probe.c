@@ -1552,6 +1552,12 @@ static inline void cpu_probe_legacy(struct cpuinfo_mips *c, unsigned int cpu)
 		}
 
 		break;
+	case PRID_IMP_LX5280:
+		c->cputype = CPU_LX5280;
+		__cpu_name[cpu] = "Lexra LX5280";
+		c->options = MIPS_CPU_TLB | MIPS_CPU_LX5280_CACHE;
+		c->tlbsize = 16; // TODO Lexra: RTL8186 only. use dt?
+		break;
 	}
 }
 

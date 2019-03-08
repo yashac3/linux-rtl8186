@@ -80,7 +80,8 @@ enum pgtable_bits {
 	_PAGE_MODIFIED_SHIFT,
 };
 
-#elif defined(CONFIG_CPU_R3000) || defined(CONFIG_CPU_TX39XX)
+#elif defined(CONFIG_CPU_R3000) || defined(CONFIG_CPU_TX39XX) || \
+	defined(CONFIG_CPU_LX5280)
 
 /* Page table bits used for r3k systems */
 enum pgtable_bits {
@@ -146,7 +147,8 @@ enum pgtable_bits {
 #define _PAGE_GLOBAL		(1 << _PAGE_GLOBAL_SHIFT)
 #define _PAGE_VALID		(1 << _PAGE_VALID_SHIFT)
 #define _PAGE_DIRTY		(1 << _PAGE_DIRTY_SHIFT)
-#if defined(CONFIG_CPU_R3000) || defined(CONFIG_CPU_TX39XX)
+#if defined(CONFIG_CPU_R3000) || defined(CONFIG_CPU_TX39XX) || \
+	defined(CONFIG_CPU_LX5280)
 # define _CACHE_UNCACHED	(1 << _CACHE_UNCACHED_SHIFT)
 # define _CACHE_MASK		_CACHE_UNCACHED
 # define _PFN_SHIFT		PAGE_SHIFT
@@ -204,7 +206,8 @@ static inline uint64_t pte_to_entrylo(unsigned long pte_val)
 /*
  * Cache attributes
  */
-#if defined(CONFIG_CPU_R3000) || defined(CONFIG_CPU_TX39XX)
+#if defined(CONFIG_CPU_R3000) || defined(CONFIG_CPU_TX39XX) || \
+	defined(CONFIG_CPU_LX5280)
 
 #define _CACHE_CACHABLE_NONCOHERENT 0
 #define _CACHE_UNCACHED_ACCELERATED _CACHE_UNCACHED

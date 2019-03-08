@@ -26,6 +26,7 @@
 #include <asm/mmu_context.h>
 #include <asm/ptrace.h>
 #include <asm/highmem.h>		/* For VMALLOC_END */
+#include <asm/traps.h>
 #include <linux/kdebug.h>
 
 int show_unhandled_signals = 1;
@@ -204,6 +205,9 @@ bad_area:
 bad_area_nosemaphore:
 	/* User mode accesses just cause a SIGSEGV */
 	if (user_mode(regs)) {
+		if (!simulate_rdhwr_in_page_fault(regs))
+			return;
+
 		tsk->thread.cp0_badvaddr = address;
 		tsk->thread.error_code = write;
 		if (show_unhandled_signals &&

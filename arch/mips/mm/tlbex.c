@@ -2606,6 +2606,7 @@ void build_tlb_refill_handler(void)
 	case CPU_TX3912:
 	case CPU_TX3922:
 	case CPU_TX3927:
+	case CPU_LX5280:
 #ifndef CONFIG_MIPS_PGD_C0_CONTEXT
 		if (cpu_has_local_ebase)
 			build_r3000_tlb_refill_handler();

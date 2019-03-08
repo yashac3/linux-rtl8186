@@ -234,6 +234,12 @@ void cpu_cache_init(void)
 		octeon_cache_init();
 	}
 
+	if (cpu_has_lx5280_cache) {
+		extern void __weak lx5280_cache_init(void);
+
+		lx5280_cache_init();
+	}
+
 	setup_protection_map();
 }
 
