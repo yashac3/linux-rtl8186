@@ -2,7 +2,7 @@
 /*
  * Realtek RTL8186 SoC interrupt controller driver.
  *
- * Copyright (C) 2018 Yasha Cherikovsky
+ * Copyright (C) 2019 Yasha Cherikovsky
  */
 
 #include <linux/init.h>
@@ -22,7 +22,6 @@ static struct {
 	void __iomem *base;
 	struct irq_domain *domain;
 } intc;
-
 
 asmlinkage void plat_irq_dispatch(void)
 {
