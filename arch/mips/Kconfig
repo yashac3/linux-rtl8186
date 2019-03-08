@@ -358,6 +358,7 @@ config MACH_RTL8186
 	bool "Realtek RTL8186 SoC"
 	select SYS_SUPPORTS_BIG_ENDIAN
 	select SYS_SUPPORTS_32BIT_KERNEL
+	select SYS_SUPPORTS_RELOCATABLE
 	select SYS_HAS_CPU_LX5280
 	select DMA_NONCOHERENT
 	select SYS_SUPPORTS_ZBOOT_UART16550
@@ -2687,7 +2688,7 @@ config SYS_SUPPORTS_NUMA
 
 config RELOCATABLE
 	bool "Relocatable kernel"
-	depends on SYS_SUPPORTS_RELOCATABLE && (CPU_MIPS32_R2 || CPU_MIPS64_R2 || CPU_MIPS32_R6 || CPU_MIPS64_R6 || CAVIUM_OCTEON_SOC)
+	depends on SYS_SUPPORTS_RELOCATABLE && (CPU_MIPS32_R2 || CPU_MIPS64_R2 || CPU_MIPS32_R6 || CPU_MIPS64_R6 || CAVIUM_OCTEON_SOC || MACH_RTL8186)
 	help
 	  This builds a kernel image that retains relocation information
 	  so it can be loaded someplace besides the default 1MB.

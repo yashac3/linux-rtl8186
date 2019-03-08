@@ -43,6 +43,15 @@ int __weak plat_post_relocation(long offset)
 	return 0;
 }
 
+#ifdef CONFIG_CPU_LX5280
+
+static void __init sync_icache(void *kbase, unsigned long kernel_length)
+{
+	// TODO call lexra cacheflush here
+}
+
+#else  /* !CONFIG_CPU_LX5280 */
+
 static inline u32 __init get_synci_step(void)
 {
 	u32 res;
@@ -69,6 +78,8 @@ static void __init sync_icache(void *kbase, unsigned long kernel_length)
 	/* Completion barrier */
 	__sync();
 }
+
+#endif /* !CONFIG_CPU_LX5280 */
 
 static int __init apply_r_mips_64_rel(u32 *loc_orig, u32 *loc_new, long offset)
 {
@@ -304,8 +315,11 @@ void *__init relocate_kernel(void)
 	void *kernel_entry = start_kernel;
 	void *fdt = NULL;
 
+#ifndef CONFIG_MACH_RTL8186
 	/* Get the command line */
 	fw_init_cmdline();
+#endif
+
 #if defined(CONFIG_USE_OF)
 	/* Deal with the device tree */
 	fdt = plat_get_fdt();

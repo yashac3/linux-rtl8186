@@ -150,6 +150,10 @@ dtb_found:
 	set_saved_sp	sp, t0, t1
 	PTR_SUBU	sp, 4 * SZREG		# init stack pointer
 
+
+#ifdef CONFIG_CPU_LX5280
+	jr		v0
+#else  /* !CONFIG_CPU_LX5280 */
 	/*
 	 * relocate_kernel returns the entry point either
 	 * in the relocated kernel or the original if for
@@ -158,6 +162,8 @@ dtb_found:
 	 * newly sync'd icache.
 	 */
 	jr.hb		v0
+#endif /* !CONFIG_CPU_LX5280 */
+
 #else  /* !CONFIG_RELOCATABLE */
 	j		start_kernel
 #endif /* !CONFIG_RELOCATABLE */
