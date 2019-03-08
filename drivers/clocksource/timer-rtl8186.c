@@ -7,7 +7,7 @@
  * Timer2 (32bit): Used as clocksource
  * Timer3 (32bit): Used as clock event device
  *
- * Copyright (C) 2018 Yasha Cherikovsky
+ * Copyright (C) 2019 Yasha Cherikovsky
  */
 
 #include <linux/init.h>
@@ -70,7 +70,6 @@ static void rtl8186_set_mode_bit(int timer, int mode)
 
 	writel(tccnr, base + TCCNR);
 }
-
 
 static irqreturn_t rtl8186_timer_interrupt(int irq, void *dev_id)
 {
