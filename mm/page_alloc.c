@@ -3572,7 +3572,8 @@ void warn_alloc(gfp_t gfp_mask, nodemask_t *nodemask, const char *fmt, ...)
 	static DEFINE_RATELIMIT_STATE(nopage_rs, DEFAULT_RATELIMIT_INTERVAL,
 				      DEFAULT_RATELIMIT_BURST);
 
-	if ((gfp_mask & __GFP_NOWARN) || !__ratelimit(&nopage_rs))
+	// TODO: RTL8186 hack for disabling dmesg spam about failing SKB allocations
+	if ((gfp_mask & __GFP_NOWARN) || !__ratelimit(&nopage_rs) || IS_ENABLED(CONFIG_MACH_RTL8186))
 		return;
 
 	va_start(args, fmt);
