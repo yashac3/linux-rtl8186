@@ -19,6 +19,8 @@
 #include <linux/of_clk.h>
 #include <linux/io.h>
 
+#include <asm/mach-rtl8186/rtl8186.h>
+
 #include "timer-of.h"
 
 /* Timer registers */
@@ -71,7 +73,7 @@ static void rtl8186_set_mode_bit(int timer, int mode)
 	writel(tccnr, base + TCCNR);
 }
 
-
+LEXRA_SPEEDUP_SECTION
 static irqreturn_t rtl8186_timer_interrupt(int irq, void *dev_id)
 {
 	struct clock_event_device *cd = dev_id;
@@ -85,6 +87,7 @@ static irqreturn_t rtl8186_timer_interrupt(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
+LEXRA_SPEEDUP_SECTION
 static int rtl8186_clockevent_set_next(unsigned long evt,
 				       struct clock_event_device *cd)
 {

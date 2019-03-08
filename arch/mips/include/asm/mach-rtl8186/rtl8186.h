@@ -34,4 +34,11 @@
 #define RTL8186_GPGISR      RTL8186_REGISTER(0x15C)
 
 
+// TODO separate lexra header
+#ifndef __ASSEMBLY__
+#define LEXRA_SPEEDUP_SECTION __attribute__ ((section(".lexra_speedup.text")))
+#else
+#define LEXRA_SPEEDUP_SECTION .section .lexra_speedup.text
+#endif
+
 #endif /* __ASM_RTL8186_H */

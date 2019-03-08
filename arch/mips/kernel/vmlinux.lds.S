@@ -61,6 +61,11 @@ SECTIONS
 		KPROBES_TEXT
 		IRQENTRY_TEXT
 		SOFTIRQENTRY_TEXT
+		. = ALIGN(4096);
+		__lexra_speedup_text_start = .;
+		*(.lexra_speedup.text)
+		__lexra_speedup_text_end = .;
+		. = ALIGN(4096);
 		*(.text.*)
 		*(.fixup)
 		*(.gnu.warning)

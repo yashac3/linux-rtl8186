@@ -2165,6 +2165,8 @@ static void configure_status(void)
 		status_set |= ST0_XX;
 	if (cpu_has_dsp)
 		status_set |= ST0_MX;
+	if (current_cpu_data.cputype == CPU_LX5280)
+		status_set |= ST0_CU3; /* On LX5280 we initialize CP3 for speedup (IMEM, DMEM) */
 
 	change_c0_status(ST0_CU|ST0_MX|ST0_RE|ST0_FR|ST0_BEV|ST0_TS|ST0_KX|ST0_SX|ST0_UX,
 			 status_set);
@@ -2189,6 +2191,22 @@ static void configure_hwrena(void)
 
 	if (hwrena)
 		write_c0_hwrena(hwrena);
+}
+
+extern char __lexra_speedup_text_start[];
+
+static void configure_lexra_speedup(void) {
+	u32 imem_base = virt_to_phys(__lexra_speedup_text_start);
+	u32 imem_top = imem_base + 0xfff; /* 4K */
+	u32 cctl;
+
+	cctl = read_c0_lx5280_cctl();
+	write_c0_lx5280_cctl(cctl | LX5280_CCTL_IMEMOFF);
+	write_c3_lx5280_imem_base(imem_base);
+	write_c3_lx5280_imem_top(imem_top);
+	write_c0_lx5280_cctl(cctl | LX5280_CCTL_IMEMFILL);
+
+	pr_info("LX5280: Initialized IMEM for speedup at PA: 0x%08x", imem_base);
 }
 
 static void configure_exception_vector(void)
@@ -2223,6 +2241,7 @@ void per_cpu_trap_init(bool is_boot_cpu)
 	unsigned int cpu = smp_processor_id();
 
 	configure_status();
+	configure_lexra_speedup(); /* Must happen when CP3 is enabled. TODO: find better place to do this */
 	configure_hwrena();
 
 	configure_exception_vector();
@@ -2510,6 +2529,7 @@ static int trap_pm_notifier(struct notifier_block *self, unsigned long cmd,
 	case CPU_PM_ENTER_FAILED:
 	case CPU_PM_EXIT:
 		configure_status();
+		configure_lexra_speedup(); // Lexra TODO
 		configure_hwrena();
 		configure_exception_vector();
 

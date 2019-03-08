@@ -1967,6 +1967,19 @@ do {									\
 #define read_c0_brcm_sleepcount()	__read_32bit_c0_register($22, 7)
 #define write_c0_brcm_sleepcount(val)	__write_32bit_c0_register($22, 7, val)
 
+/* Lexra LX5280 */
+#define __write_32bit_c3_register(register, value)			\
+do {									\
+	__asm__ __volatile__(					\
+		"mtc3\t%z0, " #register "\n\t"			\
+		: : "Jr" ((unsigned int)(value)));		\
+} while (0)
+
+#define write_c3_lx5280_imem_base(val)	__write_32bit_c3_register($0, val)
+#define write_c3_lx5280_imem_top(val)	__write_32bit_c3_register($1, val)
+#define write_c3_lx5280_dmem_base(val)	__write_32bit_c3_register($4, val)
+#define write_c3_lx5280_dmem_top(val)	__write_32bit_c3_register($5, val)
+
 /*
  * Macros to access the guest system control coprocessor
  */

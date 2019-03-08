@@ -13,6 +13,8 @@
 #include <linux/of.h>
 #include <linux/of_address.h>
 
+#include <asm/mach-rtl8186/rtl8186.h>
+
 #define RTL8186_NR_IRQS 11
 
 #define GIMR 0x00
@@ -23,7 +25,7 @@ static struct {
 	struct irq_domain *domain;
 } intc;
 
-
+LEXRA_SPEEDUP_SECTION
 asmlinkage void plat_irq_dispatch(void)
 {
 	u32 hwirq, virq;

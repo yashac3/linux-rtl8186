@@ -7,6 +7,12 @@
 #include <linux/interrupt.h>
 #include <linux/mii.h>
 
+// TODO depends on lexra speedup
+#include <asm/mach-rtl8186/rtl8186.h>
+
+// TODO try optimizing driver without lexra cheats
+// #undef LEXRA_SPEEDUP_SECTION
+// #define LEXRA_SPEEDUP_SECTION
 
 #define RTL8186_DEBUG_MDIO 0
 #define RTL8186_FAST_BRIDGE_HACK 0
@@ -313,12 +319,14 @@ static inline u32 clockticks_to_usec(u32 ticks) {
 }
 
 
+LEXRA_SPEEDUP_SECTION
 static void stopwatch_init(struct rtl8186_stopwatch *sw) {
 	sw->is_started = 0;
 	sw->start_time = 0;
 	sw->total = 0;
 }
 
+LEXRA_SPEEDUP_SECTION
 static void stopwatch_start(struct rtl8186_stopwatch *sw) {
 	if (sw->is_started) {
 		pr_warn("Tried to start already started stopwatch\n");
@@ -329,6 +337,7 @@ static void stopwatch_start(struct rtl8186_stopwatch *sw) {
 	sw->start_time = rtl8186_time();
 }
 
+LEXRA_SPEEDUP_SECTION
 static void stopwatch_stop(struct rtl8186_stopwatch *sw) {
 	if (!sw->is_started) {
 		pr_warn("Tried to stop already stopped stopwatch\n");
@@ -339,6 +348,7 @@ static void stopwatch_stop(struct rtl8186_stopwatch *sw) {
 	sw->is_started = 0;
 }
 
+LEXRA_SPEEDUP_SECTION
 static u32 stopwatch_elapsed(struct rtl8186_stopwatch *sw) {
 	if (sw->is_started) {
 		pr_warn("Stopwatch is running!\n");
@@ -497,6 +507,7 @@ static void rtl8186_rx_err_acct(struct re_private *cp, unsigned rx_tail,
 // 	}
 // }
 
+LEXRA_SPEEDUP_SECTION
 static inline void rtl8186_rx_checksum(struct sk_buff *skb, u32 status)
 {
 	unsigned int protocol = (status >> 16) & 0x3;
@@ -510,6 +521,7 @@ static inline void rtl8186_rx_checksum(struct sk_buff *skb, u32 status)
 	}
 }
 
+LEXRA_SPEEDUP_SECTION
 static struct sk_buff *rtl8186_alloc_rx_skb(struct re_private *cp, unsigned int len) {
 	struct sk_buff *skb = napi_alloc_skb(&cp->rx_napi, len + RX_OFFSET * 2);
 	if (!skb)
@@ -522,6 +534,7 @@ static struct sk_buff *rtl8186_alloc_rx_skb(struct re_private *cp, unsigned int 
 	return skb;
 }
 
+LEXRA_SPEEDUP_SECTION
 static int rtl8186_rx_poll(struct napi_struct *napi, int budget) {
 	struct re_private *cp = container_of(napi, struct re_private, rx_napi);
 	unsigned int rx_tail;
@@ -637,6 +650,7 @@ setup_new_skb:
 	return rx;
 }
 
+LEXRA_SPEEDUP_SECTION
 static int rtl8186_tx_poll(struct napi_struct *napi, int budget) {
 	struct re_private *cp = container_of(napi, struct re_private, tx_napi);
 	unsigned long flags;
@@ -656,6 +670,7 @@ static int rtl8186_tx_poll(struct napi_struct *napi, int budget) {
 }
 
 
+LEXRA_SPEEDUP_SECTION
 static irqreturn_t rtl8186_interrupt(int irq, void *dev_instance)
 {
 	struct net_device *dev = dev_instance;
@@ -710,6 +725,7 @@ out_unlock:
 	return IRQ_HANDLED;
 }
 
+LEXRA_SPEEDUP_SECTION
 static int rtl8186_tx(struct re_private *cp, int budget)
 {
 	unsigned int bytes_compl = 0, pkts_compl = 0;
@@ -762,6 +778,7 @@ static int rtl8186_tx(struct re_private *cp, int budget)
 }
 
 
+LEXRA_SPEEDUP_SECTION
 static int rtl8186_start_xmit_internal(struct sk_buff *skb, struct re_private *cp,
 		struct net_device *dev) {
 	unsigned int entry;
@@ -825,6 +842,7 @@ static int rtl8186_start_xmit_internal(struct sk_buff *skb, struct re_private *c
 }
 
 
+LEXRA_SPEEDUP_SECTION
 static int rtl8186_start_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	struct re_private *cp = rtl8186_priv(dev);
