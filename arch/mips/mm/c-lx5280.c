@@ -173,11 +173,6 @@ static void lx5280_flush_data_cache_page(unsigned long addr)
 	__lx5280_flush_dcache();
 }
 
-static void lx5280_flush_cache_sigtramp(unsigned long addr)
-{
-	lx5280_flush_cache_all();
-}
-
 static void lx5280_flush_kernel_vmap_range(unsigned long vaddr, int size)
 {
 	lx5280_flush_cache_all();
@@ -230,7 +225,6 @@ void lx5280_cache_init(void)
 
 	__flush_kernel_vmap_range = lx5280_flush_kernel_vmap_range;
 
-	flush_cache_sigtramp = lx5280_flush_cache_sigtramp;
 	local_flush_data_cache_page = local_lx5280_flush_data_cache_page;
 	flush_data_cache_page = lx5280_flush_data_cache_page;
 
