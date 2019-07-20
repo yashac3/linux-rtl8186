@@ -738,29 +738,34 @@ static int simulate_sync(struct pt_regs *regs, unsigned int opcode)
 static int simulate_load_store_lr(struct pt_regs *regs, unsigned int opcode)
 {
 	unsigned int op = MIPSInst_OPCODE(opcode);
-	unsigned int rt, offset, base;
-	unsigned int unaligned_offset;
+	unsigned int rt, base;
+	int offset;
+
 	unsigned long __user *addr;
 	unsigned long __user *aligned_addr;
-	unsigned long touched_shift, untouched_mask, loaded_mask = 0, reg,
-						     loaded_bytes = 0;
-	unsigned long uval, res, touched_bytes = 0, untouched_bits = 0,
-				 touched_bits = 0, touched_mask = 0;
+	unsigned int unaligned_offset;
+	unsigned int touched_bits, untouched_bits;
+
+	unsigned long touched_mask, untouched_mask;
+
+	unsigned long reg = 0, res = 0, uval;
 
 	// TODO think about little-endian vs big-endian
-	// TODO think about 64bit (sign extend higher dworda)
 	if (op == lwl_op) {
 		rt = MIPSInst_RT(opcode);
-		offset = MIPSInst_UIMM(opcode);
+		offset = MIPSInst_SIMM(opcode);
 		base = MIPSInst_RS(opcode);
 
 		addr = (unsigned long __user *)(regs->regs[base] + offset);
 		aligned_addr =
 			(unsigned long __user *)(((unsigned long)addr) & (~3));
+
 		unaligned_offset = ((unsigned long)addr) & 3;
-		touched_shift = unaligned_offset
-				<< 3; // * 8, thus = (0, 8, 16, 24)
-		untouched_mask = (1 << touched_shift) - 1;
+
+		touched_bits = (4 - unaligned_offset) << 3;
+		untouched_bits = 32 - touched_bits;
+		untouched_mask = (1 << untouched_bits) - 1;
+		touched_mask = ~untouched_mask;
 
 		reg = regs->regs[rt];
 
@@ -768,11 +773,12 @@ static int simulate_load_store_lr(struct pt_regs *regs, unsigned int opcode)
 			return SIGSEGV;
 		}
 
-		res = (reg & untouched_mask) | (uval << touched_shift);
+		res = (reg & untouched_mask) | (uval << untouched_bits);
 
-		pr_debug(
-			"lwl: al_WORD=%08lx, loaded %08lx into reg. addr=%p, al_addr=%p. loaded=%ld\n",
-			uval, res, addr, aligned_addr, loaded_bytes);
+		pr_info("lwl: al_WORD=%08lx, loaded %08lx into reg. addr=%p, al_addr=%p. loaded=%u\n",
+			uval, res, addr, aligned_addr, touched_bits);
+
+		// TODO think about 64bit (sign extend higher dwords)
 		regs->regs[rt] = res;
 		return 0;
 	}
@@ -782,16 +788,18 @@ static int simulate_load_store_lr(struct pt_regs *regs, unsigned int opcode)
 		// to the right of the register
 
 		rt = MIPSInst_RT(opcode);
-		offset = MIPSInst_UIMM(opcode);
+		offset = MIPSInst_SIMM(opcode);
 		base = MIPSInst_RS(opcode);
 
 		addr = (unsigned long __user *)(regs->regs[base] + offset);
 		aligned_addr =
 			(unsigned long __user *)(((unsigned long)addr) & (~3));
+		unaligned_offset = ((unsigned long)addr) & 3;
 
-		loaded_bytes = (((unsigned long)addr) & 3) + 1;
-		loaded_mask = (1 << (loaded_bytes << 3)) - 1;
-		untouched_mask = ~loaded_mask;
+		touched_bits = (unaligned_offset + 1) << 3;
+		untouched_bits = 32 - touched_bits;
+		touched_mask = (1 << touched_bits) - 1;
+		untouched_mask = ~touched_mask;
 
 		reg = regs->regs[rt];
 
@@ -800,11 +808,10 @@ static int simulate_load_store_lr(struct pt_regs *regs, unsigned int opcode)
 		}
 
 		res = (reg & untouched_mask) |
-		      ((uval >> ((4 - loaded_bytes) << 3)) & loaded_mask);
+		      ((uval >> untouched_bits) & touched_mask);
 
-		pr_debug(
-			"lwr: al_WORD=%08lx, loaded %08lx into reg. addr=%p, al_addr=%p. loaded=%ld\n",
-			uval, res, addr, aligned_addr, loaded_bytes);
+		pr_info("lwr: al_WORD=%08lx, loaded %08lx into reg. addr=%p, al_addr=%p. loaded=%u\n",
+			uval, res, addr, aligned_addr, touched_bits);
 
 		regs->regs[rt] = res;
 		return 0;
@@ -812,18 +819,18 @@ static int simulate_load_store_lr(struct pt_regs *regs, unsigned int opcode)
 
 	if (op == swl_op) {
 		rt = MIPSInst_RT(opcode);
-		offset = MIPSInst_UIMM(opcode);
+		offset = MIPSInst_SIMM(opcode);
 		base = MIPSInst_RS(opcode);
 
 		addr = (unsigned long __user *)(regs->regs[base] + offset);
 		aligned_addr =
 			(unsigned long __user *)(((unsigned long)addr) & (~3));
 		unaligned_offset = ((unsigned long)addr) & 3;
-		touched_bytes = 4 - unaligned_offset;
-		touched_bits = touched_bytes << 3;
-		untouched_bits = 32 - touched_bits;
 
+		touched_bits = (4 - unaligned_offset) << 3;
+		untouched_bits = 32 - touched_bits;
 		untouched_mask = ((1 << untouched_bits) - 1) << touched_bits;
+		touched_mask = ~untouched_mask;
 
 		reg = regs->regs[rt];
 
@@ -832,9 +839,8 @@ static int simulate_load_store_lr(struct pt_regs *regs, unsigned int opcode)
 		}
 
 		res = (uval & untouched_mask) | (reg >> untouched_bits);
-		pr_debug(
-			"swl: stored %08lx into mem. addr=%p, al_addr=%p. loaded=%ld\n",
-			res, addr, aligned_addr, loaded_bytes);
+		pr_info("swl: stored %08lx into mem. addr=%p, al_addr=%p. loaded=%u\n",
+			res, addr, aligned_addr, touched_bits);
 
 		if (unlikely(put_user(res, aligned_addr))) {
 			return SIGSEGV;
@@ -845,7 +851,7 @@ static int simulate_load_store_lr(struct pt_regs *regs, unsigned int opcode)
 
 	if (op == swr_op) {
 		rt = MIPSInst_RT(opcode);
-		offset = MIPSInst_UIMM(opcode);
+		offset = MIPSInst_SIMM(opcode);
 		base = MIPSInst_RS(opcode);
 
 		addr = (unsigned long __user *)(regs->regs[base] + offset);
@@ -853,14 +859,8 @@ static int simulate_load_store_lr(struct pt_regs *regs, unsigned int opcode)
 			(unsigned long __user *)(((unsigned long)addr) & (~3));
 		unaligned_offset = ((unsigned long)addr) & 3;
 
-		loaded_bytes = (((unsigned long)addr) & 3) + 1;
-		loaded_mask = (1 << (loaded_bytes << 3)) - 1;
-		untouched_mask = ~loaded_mask;
-
-		touched_bytes = unaligned_offset + 1;
-		touched_bits = touched_bytes << 3;
+		touched_bits = (unaligned_offset + 1) << 3;
 		untouched_bits = 32 - touched_bits;
-
 		untouched_mask = (1 << untouched_bits) - 1;
 		touched_mask = ~untouched_mask;
 
@@ -873,9 +873,8 @@ static int simulate_load_store_lr(struct pt_regs *regs, unsigned int opcode)
 		res = (uval & untouched_mask) |
 		      ((reg << untouched_bits) & touched_mask);
 
-		pr_debug(
-			"swr: stored %08lx into mem. addr=%p, al_addr=%p. loaded=%ld\n",
-			res, addr, aligned_addr, loaded_bytes);
+		pr_info("swr: stored %08lx into mem. addr=%p, al_addr=%p. loaded=%u\n",
+			res, addr, aligned_addr, touched_bits);
 
 		if (unlikely(put_user(res, aligned_addr))) {
 			return SIGSEGV;
