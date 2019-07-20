@@ -1313,6 +1313,12 @@ force_sig_info_to_task(struct kernel_siginfo *info, struct task_struct *t)
 	struct k_sigaction *action;
 	int sig = info->si_signo;
 
+	const int field = sizeof(unsigned long) * 2;
+	pr_info("force_sig_info: signal=%d\n", sig);
+	pr_info("epc = %0*lx \n", field, (unsigned long) current_pt_regs()->cp0_epc);
+	pr_info("badvaddr = %0*lx \n", field, (unsigned long) current_pt_regs()->cp0_badvaddr);
+	dump_stack();
+
 	spin_lock_irqsave(&t->sighand->siglock, flags);
 	action = &t->sighand->action[sig-1];
 	ignored = action->sa.sa_handler == SIG_IGN;
