@@ -814,7 +814,7 @@ static int rtl8186_start_xmit_internal(struct sk_buff *skb,
 	if (available == 1)
 		netif_stop_queue(dev);
 
-	if (!skb->xmit_more || netif_queue_stopped(dev)) {
+	if (!netdev_xmit_more() || netif_queue_stopped(dev)) {
 		/* The NIC can start transmitting */
 		RTL_W32(IO_CMD, CMD_CONFIG | TX_POLL);
 	}
