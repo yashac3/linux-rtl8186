@@ -779,7 +779,7 @@ static int simulate_load_store_lr(struct pt_regs *regs, unsigned int opcode)
 
 		res = (reg & untouched_mask) | (uval << untouched_bits);
 
-		pr_info("lwl: al_WORD=%08lx, loaded %08lx into reg. addr=%p, al_addr=%p. loaded=%u\n",
+		pr_debug("lwl: al_WORD=%08lx, loaded %08lx into reg. addr=%p, al_addr=%p. loaded=%u\n",
 			uval, res, addr, aligned_addr, touched_bits);
 
 #ifdef CONFIG_64BIT
@@ -800,7 +800,7 @@ static int simulate_load_store_lr(struct pt_regs *regs, unsigned int opcode)
 
 		regs->regs[rt] = res;
 
-		pr_info("lwr: al_WORD=%08lx, loaded %08lx into reg. addr=%p, al_addr=%p. loaded=%u\n",
+		pr_debug("lwr: al_WORD=%08lx, loaded %08lx into reg. addr=%p, al_addr=%p. loaded=%u\n",
 			uval, res, addr, aligned_addr, touched_bits);
 
 		return 0;
@@ -818,7 +818,7 @@ static int simulate_load_store_lr(struct pt_regs *regs, unsigned int opcode)
 			return SIGSEGV;
 		}
 
-		pr_info("swl: stored %08lx into mem. addr=%p, al_addr=%p. loaded=%u\n",
+		pr_debug("swl: stored %08lx into mem. addr=%p, al_addr=%p. loaded=%u\n",
 			res, addr, aligned_addr, touched_bits);
 
 		return 0;
@@ -837,7 +837,7 @@ static int simulate_load_store_lr(struct pt_regs *regs, unsigned int opcode)
 			return SIGSEGV;
 		}
 
-		pr_info("swr: stored %08lx into mem. addr=%p, al_addr=%p. loaded=%u\n",
+		pr_debug("swr: stored %08lx into mem. addr=%p, al_addr=%p. loaded=%u\n",
 			res, addr, aligned_addr, touched_bits);
 
 		return 0;
