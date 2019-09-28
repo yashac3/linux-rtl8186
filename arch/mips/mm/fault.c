@@ -227,7 +227,7 @@ bad_area_nosemaphore:
 			pr_cont("\n");
 		}
 		current->thread.trap_nr = (regs->cp0_cause >> 2) & 0x1f;
-		force_sig_fault(SIGSEGV, si_code, (void __user *)address, tsk);
+		force_sig_fault(SIGSEGV, si_code, (void __user *)address);
 		return;
 	}
 
@@ -283,7 +283,7 @@ do_sigbus:
 #endif
 	current->thread.trap_nr = (regs->cp0_cause >> 2) & 0x1f;
 	tsk->thread.cp0_badvaddr = address;
-	force_sig_fault(SIGBUS, BUS_ADRERR, (void __user *)address, tsk);
+	force_sig_fault(SIGBUS, BUS_ADRERR, (void __user *)address);
 
 	return;
 #ifndef CONFIG_64BIT
