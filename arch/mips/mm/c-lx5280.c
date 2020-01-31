@@ -142,6 +142,7 @@ static void lx5280_flush_cache_page(struct vm_area_struct *vma,
 	unsigned long kaddr = KSEG0ADDR(pfn << PAGE_SHIFT);
 	struct mm_struct *mm = vma->vm_mm;
 	pgd_t *pgdp;
+	p4d_t *p4dp;
 	pud_t *pudp;
 	pmd_t *pmdp;
 	pte_t *ptep;
@@ -151,7 +152,8 @@ static void lx5280_flush_cache_page(struct vm_area_struct *vma,
 		return;
 
 	pgdp = pgd_offset(mm, addr);
-	pudp = pud_offset(pgdp, addr);
+	p4dp = p4d_offset(pgdp, addr);
+	pudp = pud_offset(p4dp, addr);
 	pmdp = pmd_offset(pudp, addr);
 	ptep = pte_offset(pmdp, addr);
 
