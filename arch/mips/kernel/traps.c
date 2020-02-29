@@ -738,12 +738,11 @@ static int simulate_sync(struct pt_regs *regs, unsigned int opcode)
 #ifdef CONFIG_CPU_LX5280
 static int simulate_load_store_lr(struct pt_regs *regs, unsigned int opcode)
 {
-	unsigned long __user *effaddr_aligned;
-	unsigned long __user *effaddr;
+	unsigned long __user *vaddr_aligned;
+	unsigned long __user *vaddr;
 
-	unsigned int effaddr_unalignment;
+	unsigned int vaddr_unalignment;
 	unsigned int touched_bits;
-	unsigned int shift;
 	unsigned long touched_mask;
 	unsigned long dst_unchanged_mask;
 	unsigned long src_relevant_mask;
@@ -755,6 +754,7 @@ static int simulate_load_store_lr(struct pt_regs *regs, unsigned int opcode)
 	unsigned int base;
 	int offset;
 	int num_of_relevant_bits;
+	int src_to_dst_shift;
 
 	op = MIPSInst_OPCODE(opcode);
 	if (op != lwl_op && op != lwr_op && op != swl_op && op != swr_op) {
@@ -765,47 +765,57 @@ static int simulate_load_store_lr(struct pt_regs *regs, unsigned int opcode)
 	offset = MIPSInst_SIMM(opcode);
 	base = MIPSInst_RS(opcode);
 
-	effaddr = (unsigned long __user *)(regs->regs[base] + offset);
-	effaddr_aligned = (unsigned long __user *)(((unsigned long)effaddr) & (~3));
-	effaddr_unalignment = ((unsigned long)effaddr) & 3;
+	vaddr = (unsigned long __user *)(regs->regs[base] + offset);
+	vaddr_aligned = (unsigned long __user *)(((unsigned long)vaddr) & (~3));
+	vaddr_unalignment = ((unsigned long)vaddr) & 3;
 
 	reg = regs->regs[rt];
 
-	if (get_user(uval, effaddr_aligned)) {
+	if (get_user(uval, vaddr_aligned)) {
 		return SIGSEGV;
 	}
 
-	if (op == lwl_op) {
+	if (op == lwl_op) { // load the right side of EffAddr
 		/* In LWL op, we load the most significant bytes (rightmost bytes in BE arch)
 		 * starting at EffAddr, to the leftmost part of the register RT */
-		num_of_relevant_bits = (4 - effaddr_unalignment) * 8; /* BE */
-		shift = num_of_relevant_bits; /* BE */
-		src_relevant_mask = (1 << num_of_relevant_bits) - 1; /* BE */
+		num_of_relevant_bits = (4 - vaddr_unalignment) * 8; /* BE */ // 8,al=3
+		src_to_dst_shift = 32 - num_of_relevant_bits; /* BE */ // shift=24
+		src_relevant_mask = (1 << num_of_relevant_bits) - 1; /* BE */ // = 0x000000FF
 		dst_unchanged_mask = ~src_relevant_mask;
 
 		res = reg & dst_unchanged_mask;
-		res |= ((uval & src_relevant_mask) << shift) & src_relevant_mask;
+		res |= (uval & src_relevant_mask) << src_to_dst_shift;
 		regs->regs[rt] = res;
-		pr_info("simulated lwl: loaded from %p to $%d\n", effaddr, rt);
+		pr_info("simulated lwl: loaded %08lx from %p to $%d\n", res, vaddr_aligned, rt);
 		return 0;
 	}
 
-	if (op == swl_op) {
+	// 11 22 33 44 in reg.
+	// aa bb cc dd in mem.
+	// off=3. only store 11 to offset 3, keep the rest
+	// src_relevant_mask = 0xFF000000
+	// dst_unchanged_mask = 0xFFFFFF00
+	// aa bb cc 11
+	if (op == swl_op) { // Store to the right side of EffAddr
 		/* In SWL op, we store the most significant bytes from RT register
 		 * from RT, to the leftmost part of EffAddr (MSB) */
-		shift = effaddr_unalignment * 8;
-		dst_unchanged_mask = ((1 << shift) - 1) << touched_bits;
+		num_of_relevant_bits = (4 - vaddr_unalignment) * 8; /* BE */ // 8,al=3
+		src_to_dst_shift = 32 - num_of_relevant_bits; /* BE */ // shift=24
+		src_relevant_mask = ((1 << num_of_relevant_bits) - 1) << src_to_dst_shift; /* BE */ // = 0xFF000000
+		dst_unchanged_mask = ~((1 << num_of_relevant_bits) - 1);
 
-		res = (reg >> shift) | (uval & dst_unchanged_mask);
-		if (put_user(res, effaddr_aligned)) {
+		res = uval & dst_unchanged_mask;
+		res |= (reg & src_relevant_mask) >> src_to_dst_shift;
+		if (put_user(res, vaddr_aligned)) {
 			return SIGSEGV;
 		}
-		pr_info("simulated swl: stored from $%d to %p\n", rt, effaddr);
+		pr_info("simulated swl: stored %08lx from $%d to %p\n", res, rt, vaddr_aligned);
 		return 0;
 	}
 
+	/* TODO: Rewrite this beauty with the above variable names */
 	if (op == lwr_op) {
-		touched_bits = (effaddr_unalignment + 1) * 8;
+		touched_bits = (vaddr_unalignment + 1) * 8;
 		preserved_shift = 32 - touched_bits;
 		touched_mask = (1 << touched_bits) - 1;
 		dst_unchanged_mask = ~touched_mask;
@@ -813,22 +823,23 @@ static int simulate_load_store_lr(struct pt_regs *regs, unsigned int opcode)
 		res = (reg & dst_unchanged_mask) |
 		      ((uval >> preserved_shift) & touched_mask);
 		regs->regs[rt] = res;
-		pr_info("simulated lwr: loaded from %p to $%d\n", effaddr, rt);
+		pr_info("simulated lwr: loaded %08lx from %p to $%d\n", res, vaddr_aligned, rt);
 		return 0;
 	}
 
+	/* TODO: Rewrite this beauty with the above variable names */
 	if (op == swr_op) {
-		touched_bits = (effaddr_unalignment + 1) * 8;
+		touched_bits = (vaddr_unalignment + 1) * 8;
 		preserved_shift = 32 - touched_bits;
 		dst_unchanged_mask = (1 << preserved_shift) - 1;
 		touched_mask = ~dst_unchanged_mask;
 
 		res = (uval & dst_unchanged_mask) |
 		      ((reg << preserved_shift) & touched_mask);
-		if (put_user(res, effaddr_aligned)) {
+		if (put_user(res, vaddr_aligned)) {
 			return SIGSEGV;
 		}
-		pr_info("simulated swr: stored from $%d to %p\n", rt, effaddr);
+		pr_info("simulated swr: stored %08lx from $%d to %p\n", res, rt, vaddr_aligned);
 		return 0;
 	}
 
