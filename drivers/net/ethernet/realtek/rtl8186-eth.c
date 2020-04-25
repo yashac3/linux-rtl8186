@@ -282,7 +282,7 @@ struct re_private {
 
 static int rtl8186_tx(struct re_private *cp, int budget);
 static void rtl8186_clean_rings(struct re_private *cp);
-static void rtl8186_tx_timeout(struct net_device *dev);
+static void rtl8186_tx_timeout(struct net_device *dev, unsigned int txqueue);
 static void rtl8186_change_mac_address(struct net_device *dev, u8 *mac);
 static int rtl8186_set_mac_address(struct net_device *dev, void *p);
 static int rtl8186_start_xmit(struct sk_buff *skb, struct net_device *dev);
@@ -1009,7 +1009,7 @@ err_out:
 	return -ENOMEM;
 }
 
-static void rtl8186_tx_timeout(struct net_device *dev)
+static void rtl8186_tx_timeout(struct net_device *dev, unsigned int txqueue)
 {
 	struct re_private *cp = rtl8186_priv(dev);
 	unsigned tx_head = cp->tx_hqhead;
