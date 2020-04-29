@@ -735,10 +735,11 @@ static int simulate_sync(struct pt_regs *regs, unsigned int opcode)
 	return -1;			/* Must be something else ... */
 }
 
-#ifdef CONFIG_CPU_LX5280
+#if defined(CONFIG_CPU_NO_LOAD_STORE_LR) && defined(CONFIG_CPU_BIG_ENDIAN) && \
+	defined(CONFIG_32BIT)
 /*
  * Simulates LWL, LWR, SWL, SWR opcodes on CPUs without these instructions.
- * Currently implemented only for LX5280 CPUs (32bit big endian).
+ * Currently implemented only for 32bit big endian CPUs.
  */
 static int simulate_load_store_lr(struct pt_regs *regs, unsigned int opcode)
 {
@@ -806,7 +807,7 @@ static int simulate_load_store_lr(struct pt_regs *regs, unsigned int opcode)
 		res = reg & dst_unchanged_mask;
 		res |= (uval << src_to_dst_shift) & dst_changed_mask;
 		regs->regs[rt] = res;
-		pr_debug("simulated lwl: loaded %08lx from %p to $%d\n", res, vaddr_aligned, rt);
+		pr_info("simulated lwl: loaded %08lx from %p to $%d\n", res, vaddr_aligned, rt);
 		return 0;
 	}
 
@@ -821,7 +822,7 @@ static int simulate_load_store_lr(struct pt_regs *regs, unsigned int opcode)
 		if (put_user(res, vaddr_aligned)) {
 			return SIGSEGV;
 		}
-		pr_debug("simulated swl: stored %08lx from $%d to %p\n", res, rt, vaddr_aligned);
+		pr_info("simulated swl: stored %08lx from $%d to %p\n", res, rt, vaddr_aligned);
 		return 0;
 	}
 
@@ -834,7 +835,7 @@ static int simulate_load_store_lr(struct pt_regs *regs, unsigned int opcode)
 		res = (reg & dst_unchanged_mask);
 		res |= (uval >> src_to_dst_shift) & dst_changed_mask;
 		regs->regs[rt] = res;
-		pr_debug("simulated lwr: loaded %08lx from %p to $%d\n", res, vaddr_aligned, rt);
+		pr_info("simulated lwr: loaded %08lx from %p to $%d\n", res, vaddr_aligned, rt);
 		return 0;
 	}
 
@@ -849,14 +850,14 @@ static int simulate_load_store_lr(struct pt_regs *regs, unsigned int opcode)
 		if (put_user(res, vaddr_aligned)) {
 			return SIGSEGV;
 		}
-		pr_debug("simulated swr: stored %08lx from $%d to %p\n", res, rt, vaddr_aligned);
+		pr_info("simulated swr: stored %08lx from $%d to %p\n", res, rt, vaddr_aligned);
 		return 0;
 	}
 
 	/* Unreachable */
 	return -1;
 }
-#else /* !CONFIG_CPU_LX5280 */
+#else /* !(CONFIG_CPU_NO_LOAD_STORE_LR && CONFIG_CPU_BIG_ENDIAN && CONFIG_32BIT) */
 static int simulate_load_store_lr(struct pt_regs *regs, unsigned int opcode)
 {
 	return -1;
