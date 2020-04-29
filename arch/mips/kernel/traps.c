@@ -801,8 +801,8 @@ static int simulate_load_store_lr(struct pt_regs *regs, unsigned int opcode)
 	if (op == lwl_op) {
 		num_of_relevant_bits = (4 - vaddr_unalignment) * 8;
 		src_to_dst_shift = 32 - num_of_relevant_bits;
-		dst_changed_mask = ((1 << num_of_relevant_bits) - 1) << src_to_dst_shift;
-		dst_unchanged_mask = ~dst_changed_mask;
+		dst_unchanged_mask = (1 << (32 - num_of_relevant_bits)) - 1;
+		dst_changed_mask = ~dst_unchanged_mask;
 
 		res = reg & dst_unchanged_mask;
 		res |= (uval << src_to_dst_shift) & dst_changed_mask;
@@ -815,7 +815,7 @@ static int simulate_load_store_lr(struct pt_regs *regs, unsigned int opcode)
 		num_of_relevant_bits = (4 - vaddr_unalignment) * 8;
 		src_to_dst_shift = 32 - num_of_relevant_bits;
 		dst_changed_mask = ((1 << num_of_relevant_bits) - 1);
-		dst_unchanged_mask = ~(dst_changed_mask);
+		dst_unchanged_mask = ~dst_changed_mask;
 
 		res = uval & dst_unchanged_mask;
 		res |= (reg >> src_to_dst_shift) & dst_changed_mask;
