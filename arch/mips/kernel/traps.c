@@ -736,6 +736,10 @@ static int simulate_sync(struct pt_regs *regs, unsigned int opcode)
 }
 
 #ifdef CONFIG_CPU_LX5280
+/*
+ * Simulates LWL, LWR, SWL, SWR opcodes on CPUs without these instructions.
+ * Currently implemented only for LX5280 CPUs (32bit big endian).
+ */
 static int simulate_load_store_lr(struct pt_regs *regs, unsigned int opcode)
 {
 	unsigned long __user *vaddr_aligned;
