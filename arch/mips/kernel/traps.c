@@ -742,11 +742,8 @@ static int simulate_load_store_lr(struct pt_regs *regs, unsigned int opcode)
 	unsigned long __user *vaddr;
 
 	unsigned int vaddr_unalignment;
-	unsigned int touched_bits;
-	unsigned long touched_mask;
 	unsigned long dst_unchanged_mask;
 	unsigned long src_relevant_mask;
-	unsigned long preserved_shift;
 
 	unsigned long reg, res, uval;
 	unsigned int op;
@@ -813,29 +810,27 @@ static int simulate_load_store_lr(struct pt_regs *regs, unsigned int opcode)
 		return 0;
 	}
 
-	/* TODO: Rewrite this beauty with the above variable names */
 	if (op == lwr_op) {
-		touched_bits = (vaddr_unalignment + 1) * 8;
-		preserved_shift = 32 - touched_bits;
-		touched_mask = (1 << touched_bits) - 1;
-		dst_unchanged_mask = ~touched_mask;
+		num_of_relevant_bits = (vaddr_unalignment + 1) * 8;
+		src_to_dst_shift = 32 - num_of_relevant_bits;
+		src_relevant_mask = (1 << num_of_relevant_bits) - 1;
+		dst_unchanged_mask = ~src_relevant_mask;
 
-		res = (reg & dst_unchanged_mask) |
-		      ((uval >> preserved_shift) & touched_mask);
+		res = (reg & dst_unchanged_mask);
+		res |= (uval >> src_to_dst_shift) & src_relevant_mask;
 		regs->regs[rt] = res;
 		pr_info("simulated lwr: loaded %08lx from %p to $%d\n", res, vaddr_aligned, rt);
 		return 0;
 	}
 
-	/* TODO: Rewrite this beauty with the above variable names */
 	if (op == swr_op) {
-		touched_bits = (vaddr_unalignment + 1) * 8;
-		preserved_shift = 32 - touched_bits;
-		dst_unchanged_mask = (1 << preserved_shift) - 1;
-		touched_mask = ~dst_unchanged_mask;
+		num_of_relevant_bits = (vaddr_unalignment + 1) * 8;
+		src_to_dst_shift = 32 - num_of_relevant_bits;
+		dst_unchanged_mask = (1 << src_to_dst_shift) - 1;
+		src_relevant_mask = ~dst_unchanged_mask;
 
 		res = (uval & dst_unchanged_mask) |
-		      ((reg << preserved_shift) & touched_mask);
+		      ((reg << src_to_dst_shift) & src_relevant_mask);
 		if (put_user(res, vaddr_aligned)) {
 			return SIGSEGV;
 		}
