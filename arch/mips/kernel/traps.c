@@ -735,6 +735,141 @@ static int simulate_sync(struct pt_regs *regs, unsigned int opcode)
 	return -1;			/* Must be something else ... */
 }
 
+#if defined(CONFIG_CPU_NO_LOAD_STORE_LR) && defined(CONFIG_CPU_BIG_ENDIAN) &&  \
+	defined(CONFIG_32BIT)
+/*
+ * Simulates LWL, LWR, SWL, SWR opcodes on CPUs without these instructions.
+ * Currently implemented only for 32bit big endian CPUs.
+ */
+static int simulate_load_store_lr(struct pt_regs *regs, unsigned int opcode)
+{
+	unsigned long __user *vaddr_aligned;
+	unsigned long __user *vaddr;
+
+	unsigned int vaddr_unalignment;
+	unsigned long dst_unchanged_mask;
+	unsigned long dst_changed_mask;
+
+	unsigned long reg, res, uval;
+	unsigned int op;
+	unsigned int rt;
+	unsigned int base;
+	int offset;
+	int num_of_relevant_bits;
+	int src_to_dst_shift;
+
+	op = MIPSInst_OPCODE(opcode);
+	if (op != lwl_op && op != lwr_op && op != swl_op && op != swr_op)
+		return -1;
+
+	rt = MIPSInst_RT(opcode);
+	offset = MIPSInst_SIMM(opcode);
+	base = MIPSInst_RS(opcode);
+
+	vaddr = (unsigned long __user *)(regs->regs[base] + offset);
+	vaddr_aligned = (unsigned long __user *)(((unsigned long)vaddr) & (~3));
+	vaddr_unalignment = ((unsigned long)vaddr) & 3;
+
+	reg = regs->regs[rt];
+
+	if (get_user(uval, vaddr_aligned))
+		return SIGSEGV;
+
+	/*
+	 * The simulation code takes all unaligned operations and fits them to
+	 * the following pattern:
+	 *  - We read the value from the source operand (memory or register)
+	 *  - We shift this value by 'src_to_dst_shift' (in some direction),
+	 *      so the bits we're interested in will be in their correct (dst)
+	 *      position.
+	 *  - We fit the result into the 'dst_changed_mask' mask in the
+	 *      destination, and keep 'dst_unchanged_mask' bits intact.
+	 *
+	 *  When working on simulation, it is useful to have this test vector
+	 *  by hand (big endian, 32 bit):
+	 *   - 11 22 33 44 in reg. (offset 0 is MSB)
+	 *   - aa bb cc dd in mem. (offset 0 is MSB)
+	 *  In "swl $24, 3($0)" for example, we'll read '11' and store it
+	 *  instead of 'dd' in memory.
+	 *  So:
+	 *   - num_of_relevant_bits = 8
+	 *   - src_to_dst_shift = 24
+	 *   - dst_changed_mask = 0x000000FF
+	 *   - dst_unchanged_mask = 0xFFFFFF00
+	 *   - result in memory: aa bb cc 11
+	 */
+
+	if (op == lwl_op) {
+		num_of_relevant_bits = (4 - vaddr_unalignment) * 8;
+		src_to_dst_shift = 32 - num_of_relevant_bits;
+		dst_unchanged_mask = (1 << (32 - num_of_relevant_bits)) - 1;
+		dst_changed_mask = ~dst_unchanged_mask;
+
+		res = reg & dst_unchanged_mask;
+		res |= (uval << src_to_dst_shift) & dst_changed_mask;
+		regs->regs[rt] = res;
+		pr_debug("simulated lwl: loaded %08lx from %p to $%d\n", res,
+			 vaddr_aligned, rt);
+		return 0;
+	}
+
+	if (op == swl_op) {
+		num_of_relevant_bits = (4 - vaddr_unalignment) * 8;
+		src_to_dst_shift = 32 - num_of_relevant_bits;
+		dst_changed_mask = ((1 << num_of_relevant_bits) - 1);
+		dst_unchanged_mask = ~dst_changed_mask;
+
+		res = uval & dst_unchanged_mask;
+		res |= (reg >> src_to_dst_shift) & dst_changed_mask;
+		if (put_user(res, vaddr_aligned))
+			return SIGSEGV;
+		pr_debug("simulated swl: stored %08lx from $%d to %p\n", res,
+			 rt, vaddr_aligned);
+		return 0;
+	}
+
+	if (op == lwr_op) {
+		num_of_relevant_bits = (vaddr_unalignment + 1) * 8;
+		src_to_dst_shift = 32 - num_of_relevant_bits;
+		dst_changed_mask = (1 << num_of_relevant_bits) - 1;
+		dst_unchanged_mask = ~dst_changed_mask;
+
+		res = (reg & dst_unchanged_mask);
+		res |= (uval >> src_to_dst_shift) & dst_changed_mask;
+		regs->regs[rt] = res;
+		pr_debug("simulated lwr: loaded %08lx from %p to $%d\n", res,
+			 vaddr_aligned, rt);
+		return 0;
+	}
+
+	if (op == swr_op) {
+		num_of_relevant_bits = (vaddr_unalignment + 1) * 8;
+		src_to_dst_shift = 32 - num_of_relevant_bits;
+		dst_unchanged_mask = (1 << (32 - num_of_relevant_bits)) - 1;
+		dst_changed_mask = ~dst_unchanged_mask;
+
+		res = (uval & dst_unchanged_mask);
+		res |= (reg << src_to_dst_shift) & dst_changed_mask;
+		if (put_user(res, vaddr_aligned))
+			return SIGSEGV;
+		pr_debug("simulated swr: stored %08lx from $%d to %p\n", res,
+			 rt, vaddr_aligned);
+		return 0;
+	}
+
+	/* Unreachable */
+	return -1;
+}
+#else  /*
+	* !(defined(CONFIG_CPU_NO_LOAD_STORE_LR) &&  \
+	*   defined(CONFIG_CPU_BIG_ENDIAN) && defined(CONFIG_32BIT))
+	*/
+static int simulate_load_store_lr(struct pt_regs *regs, unsigned int opcode)
+{
+	return -1;
+}
+#endif
+
 asmlinkage void do_ov(struct pt_regs *regs)
 {
 	enum ctx_state prev_state;
@@ -1208,6 +1343,9 @@ no_r2_instr:
 
 		if (status < 0)
 			status = simulate_fp(regs, opcode, old_epc, old31);
+
+		if (status < 0)
+			status = simulate_load_store_lr(regs, opcode);
 	} else if (cpu_has_mmips) {
 		unsigned short mmop[2] = { 0 };
 
