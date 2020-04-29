@@ -807,7 +807,7 @@ static int simulate_load_store_lr(struct pt_regs *regs, unsigned int opcode)
 		res = reg & dst_unchanged_mask;
 		res |= (uval << src_to_dst_shift) & dst_changed_mask;
 		regs->regs[rt] = res;
-		pr_info("simulated lwl: loaded %08lx from %p to $%d\n", res, vaddr_aligned, rt);
+		pr_debug("simulated lwl: loaded %08lx from %p to $%d\n", res, vaddr_aligned, rt);
 		return 0;
 	}
 
@@ -822,7 +822,7 @@ static int simulate_load_store_lr(struct pt_regs *regs, unsigned int opcode)
 		if (put_user(res, vaddr_aligned)) {
 			return SIGSEGV;
 		}
-		pr_info("simulated swl: stored %08lx from $%d to %p\n", res, rt, vaddr_aligned);
+		pr_debug("simulated swl: stored %08lx from $%d to %p\n", res, rt, vaddr_aligned);
 		return 0;
 	}
 
@@ -835,7 +835,7 @@ static int simulate_load_store_lr(struct pt_regs *regs, unsigned int opcode)
 		res = (reg & dst_unchanged_mask);
 		res |= (uval >> src_to_dst_shift) & dst_changed_mask;
 		regs->regs[rt] = res;
-		pr_info("simulated lwr: loaded %08lx from %p to $%d\n", res, vaddr_aligned, rt);
+		pr_debug("simulated lwr: loaded %08lx from %p to $%d\n", res, vaddr_aligned, rt);
 		return 0;
 	}
 
@@ -850,7 +850,7 @@ static int simulate_load_store_lr(struct pt_regs *regs, unsigned int opcode)
 		if (put_user(res, vaddr_aligned)) {
 			return SIGSEGV;
 		}
-		pr_info("simulated swr: stored %08lx from $%d to %p\n", res, rt, vaddr_aligned);
+		pr_debug("simulated swr: stored %08lx from $%d to %p\n", res, rt, vaddr_aligned);
 		return 0;
 	}
 
