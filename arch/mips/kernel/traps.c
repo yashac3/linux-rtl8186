@@ -762,6 +762,8 @@ static int simulate_load_store_lr(struct pt_regs *regs, unsigned int opcode)
 	if (op != lwl_op && op != lwr_op && op != swl_op && op != swr_op)
 		return -1;
 
+	perf_sw_event(PERF_COUNT_SW_EMULATION_FAULTS, 1, regs, 0);
+
 	rt = MIPSInst_RT(opcode);
 	offset = MIPSInst_SIMM(opcode);
 	base = MIPSInst_RS(opcode);
