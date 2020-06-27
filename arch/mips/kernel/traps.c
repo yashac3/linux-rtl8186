@@ -735,8 +735,8 @@ static int simulate_sync(struct pt_regs *regs, unsigned int opcode)
 	return -1;			/* Must be something else ... */
 }
 
-#if defined(CONFIG_CPU_NO_LOAD_STORE_LR) && defined(CONFIG_CPU_BIG_ENDIAN) &&  \
-	defined(CONFIG_32BIT)
+#ifdef CONFIG_CPU_LOAD_STORE_LR_EMULATION
+
 /*
  * Simulates LWL, LWR, SWL, SWR opcodes on CPUs without these instructions.
  * Currently implemented only for 32bit big endian CPUs.
@@ -860,15 +860,7 @@ static int simulate_load_store_lr(struct pt_regs *regs, unsigned int opcode)
 	/* Unreachable */
 	return -1;
 }
-#else  /*
-	* !(defined(CONFIG_CPU_NO_LOAD_STORE_LR) &&  \
-	*   defined(CONFIG_CPU_BIG_ENDIAN) && defined(CONFIG_32BIT))
-	*/
-static int simulate_load_store_lr(struct pt_regs *regs, unsigned int opcode)
-{
-	return -1;
-}
-#endif
+#endif /* CONFIG_CPU_LOAD_STORE_LR_EMULATION */
 
 asmlinkage void do_ov(struct pt_regs *regs)
 {
@@ -1344,8 +1336,10 @@ no_r2_instr:
 		if (status < 0)
 			status = simulate_fp(regs, opcode, old_epc, old31);
 
+#ifdef CONFIG_CPU_LOAD_STORE_LR_EMULATION
 		if (status < 0)
 			status = simulate_load_store_lr(regs, opcode);
+#endif
 	} else if (cpu_has_mmips) {
 		unsigned short mmop[2] = { 0 };
 

@@ -1688,12 +1688,12 @@ config CPU_LX5280
 	select CPU_NO_LOAD_STORE_LR
 	select CPU_R3K_TLB
 	select CPU_SUPPORTS_32BIT_KERNEL
+	select CPU_LOAD_STORE_LR_EMULATION
 	help
 	  Choose this option to build a kernel for the Lexra LX5280 CPU.
 	  Lexra LX5280 implements the MIPS-I instruction set, without
 	  unaligned load and store instructions (lwl, lwr, swl, swr).
 	  Only LX5280 CPUs with a TLB unit are supported.
-
 
 config CPU_TX39XX
 	bool "R39XX"
@@ -1899,6 +1899,17 @@ config CPU_MIPS32_R5_XPA
 	  than 40 bits. Note that this has the side effect of turning on
 	  64-bit addressing which in turn makes the PTEs 64-bit in size.
 	  If unsure, say 'N' here.
+
+config CPU_LOAD_STORE_LR_EMULATION
+	bool "Emulate missing unaligned load and store instructions"
+	depends on CPU_NO_LOAD_STORE_LR
+	depends on CPU_BIG_ENDIAN
+	depends on 32BIT
+	default y
+	help
+	  Choose this option if you want to enable emulation of unaligned
+	  load and store instructions for user space applications.
+	  If unsure, say y.
 
 if CPU_LOONGSON2F
 config CPU_NOP_WORKAROUNDS
