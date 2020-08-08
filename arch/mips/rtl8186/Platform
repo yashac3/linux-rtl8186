@@ -1,7 +1,6 @@
 #
 # RTL8186
 #
-platform-$(CONFIG_MACH_RTL8186) += rtl8186/
 cflags-$(CONFIG_MACH_RTL8186)   += -I$(srctree)/arch/mips/include/asm/mach-rtl8186
 load-$(CONFIG_MACH_RTL8186)     += 0xffffffff80010000
 zload-$(CONFIG_MACH_RTL8186)    += 0xffffffff80800000
