@@ -82,5 +82,17 @@
 			status = "disabled";
 		};
 	};
+
+	eth0: ethernet@bd200000 {
+		compatible = "realtek,rtl8186-eth";
+		reg = <0xbd200000 0x80000>;
+		interrupts = <4>;
+	};
+
+	eth1: ethernet@bd300000 {
+		compatible = "realtek,rtl8186-eth";
+		reg = <0xbd300000 0x100000>;
+		interrupts = <5>;
+	};
 };
 
