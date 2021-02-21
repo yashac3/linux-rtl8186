@@ -728,4 +728,12 @@ config MICROCHIP_PIT64B
 	  modes and high resolution. It is used as a clocksource
 	  and a clockevent.
 
+config RTL8186_TIMER
+	bool "RTL8186 timer driver" if COMPILE_TEST
+	depends on HAS_IOMEM
+	select TIMER_OF
+	select CLKSRC_MMIO
+	help
+	  Enables support for the RTL8186 timer driver.
+
 endmenu
