@@ -416,8 +416,7 @@ static enum hrtimer_restart watchdog_timer_fn(struct hrtimer *hrtimer)
 		print_irqtrace_events(current);
 		if (regs)
 			show_regs(regs);
-		else
-			dump_stack();
+		dump_stack();
 
 		if (softlockup_all_cpu_backtrace) {
 			/* Avoid generating two back traces for current
