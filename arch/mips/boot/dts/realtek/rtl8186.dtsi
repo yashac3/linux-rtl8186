@@ -94,5 +94,11 @@
 		reg = <0xbd300000 0x100000>;
 		interrupts = <5>;
 	};
+
+	wlan0: wlan@bd400000 {
+		compatible = "realtek,rtl8186-wlan";
+		reg = <0xbd400000 0x100000>;
+		interrupts = <2>;
+	};
 };
 

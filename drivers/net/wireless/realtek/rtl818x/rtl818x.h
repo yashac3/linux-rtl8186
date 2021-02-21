@@ -235,7 +235,17 @@ struct rtl818x_csr {
 	u8	PHY_DELAY; /*  0x78 */
 	u8	CARRIER_SENSE_COUNTER; /* 0x79 */
 	u8	reserved_11[2]; /* 0x7a */
-	u8	PHY[4]; /* 0x7c  */
+	union {
+		struct {
+			u8  PHYADDR; /* 0x7c */
+			u8  PHYDATAW; /* 0x7d */
+			u8  PHYDATAR; /* 0x7e */
+			u8  PHY_RSVD;
+		} __packed;
+
+		u8 PHY[4];
+	} __packed;
+
 	__le16	RFPinsOutput; /* 0x80 */
 	__le16	RFPinsEnable; /* 0x82 */
 	__le16	RFPinsSelect; /* 0x84 */

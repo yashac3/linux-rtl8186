@@ -58,6 +58,10 @@ config RTL8180
 
 	  Thanks to Realtek for their support!
 
+config RTL8186_WLAN
+	bool "Realtek 8186"
+	depends on MAC80211 && OF
+
 config RTL8187
 	tristate "Realtek 8187 and 8187B USB support"
 	depends on MAC80211 && USB
