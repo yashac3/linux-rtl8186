@@ -1853,6 +1853,17 @@ config CPU_MIPS32_R5_XPA
 	  64-bit addressing which in turn makes the PTEs 64-bit in size.
 	  If unsure, say 'N' here.
 
+config CPU_LOAD_STORE_LR_EMULATION
+	bool "Emulate missing unaligned load and store instructions"
+	depends on CPU_NO_LOAD_STORE_LR
+	depends on CPU_BIG_ENDIAN
+	depends on 32BIT
+	default y
+	help
+	  Choose this option if you want to enable emulation of unaligned
+	  load and store instructions for user space applications.
+	  If unsure, say y.
+
 if CPU_LOONGSON2F
 config CPU_NOP_WORKAROUNDS
 	bool
