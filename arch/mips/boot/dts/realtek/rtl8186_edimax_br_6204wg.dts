@@ -14,7 +14,7 @@
 	};
 
 	chosen {
-		bootargs = "console=ttyS0,38400n8";
+		bootargs = "console=ttyS0,38400n8 root=/dev/mtdblock4 rootfstype=squashfs ro";
 	};
 
 	flash0: flash@1e000000 {
@@ -32,6 +32,14 @@
 		partition@8000 {
 			label = "settings";
 			reg = <0x8000 0x8000>;
+		};
+		partition@10000 {
+			label = "kernel";
+			reg = <0x10000 0x130000>;
+		};
+		partition@140000 {
+			label = "rootfs";
+			reg = <0x140000 0xc0000>;
 		};
 	};
 };
