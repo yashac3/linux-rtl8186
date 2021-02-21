@@ -1,0 +1,45 @@
+// SPDX-License-Identifier: GPL-2.0
+/dts-v1/;
+
+/include/ "rtl8186.dtsi"
+
+/ {
+	compatible = "edimax,br-6204wg", "realtek,rtl8186-soc";
+	model = "Edimax BR-6204Wg";
+
+
+	memory@0 {
+		device_type = "memory";
+		reg = <0x00000000 0x01000000>; /* 16MB */
+	};
+
+	chosen {
+		bootargs = "console=ttyS0,38400n8";
+	};
+
+	flash0: flash@1e000000 {
+		compatible = "cfi-flash";
+		reg = <0x1e000000 0x200000>;
+		#address-cells = <1>;
+		#size-cells = <1>;
+		bank-width = <2>;
+
+		partition@0 {
+			label = "bootloader+defaults";
+			reg = <0x0 0x8000>;
+			read-only;
+		};
+		partition@8000 {
+			label = "settings";
+			reg = <0x8000 0x8000>;
+		};
+	};
+};
+
+&uart0 {
+	status = "okay";
+};
+
+&cpu_clk {
+	clock-frequency = <180000000>; /* 180MHz */
+};
