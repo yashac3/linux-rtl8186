@@ -112,6 +112,13 @@ static void __cpuidle au1k_wait(void)
 	: : "r" (au1k_wait), "r" (c0status));
 }
 
+static void lx5280_wait(void)
+{
+	/* Execute LX5280 'sleep' instruction */
+	asm volatile(".word 0x42000038");
+	local_irq_enable();
+}
+
 static int __initdata nowait;
 
 static int __init wait_disable(char *s)
@@ -246,6 +253,9 @@ void __init check_wait(void)
 		 * disable the use of WAIT for 20Kc entirely.
 		   cpu_wait = r4k_wait;
 		 */
+		break;
+	case CPU_LX5280:
+		cpu_wait = lx5280_wait;
 		break;
 	default:
 		break;

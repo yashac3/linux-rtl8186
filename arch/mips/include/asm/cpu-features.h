@@ -124,6 +124,9 @@
 #ifndef cpu_has_octeon_cache
 #define cpu_has_octeon_cache	0
 #endif
+#ifndef cpu_has_lx5280_cache
+#define cpu_has_lx5280_cache	__opt(MIPS_CPU_LX5280_CACHE)
+#endif
 /* Don't override `cpu_has_fpu' to 1 or the "nofpu" option won't work.  */
 #ifndef cpu_has_fpu
 # ifdef CONFIG_MIPS_FP_SUPPORT

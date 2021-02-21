@@ -35,4 +35,6 @@ extern int register_nmi_notifier(struct notifier_block *nb);
 	register_nmi_notifier(&fn##_nb);				\
 })
 
+int simulate_rdhwr_in_page_fault(struct pt_regs *regs);
+
 #endif /* _ASM_TRAPS_H */
