@@ -314,18 +314,23 @@ static inline u32 clockticks_to_usec(u32 ticks)
 	return (ticks * 45) / 1000;
 }
 
+#if RTL8186_STOPWATCH
+
+struct rtl8186_stopwatch {
+	int is_started;
+	u32 start_time;
+	u32 total;
+};
+
 static inline void stopwatch_init(struct rtl8186_stopwatch *sw)
 {
-#if RTL8186_STOPWATCH
 	sw->is_started = 0;
 	sw->start_time = 0;
 	sw->total = 0;
-#endif
 }
 
 static inline void stopwatch_start(struct rtl8186_stopwatch *sw)
 {
-#if RTL8186_STOPWATCH
 	if (sw->is_started) {
 		pr_warn("Tried to start already started stopwatch\n");
 		dump_stack();
@@ -333,12 +338,10 @@ static inline void stopwatch_start(struct rtl8186_stopwatch *sw)
 	}
 	sw->is_started = 1;
 	sw->start_time = rtl8186_time();
-#endif
 }
 
 static inline void stopwatch_stop(struct rtl8186_stopwatch *sw)
 {
-#if RTL8186_STOPWATCH
 	if (!sw->is_started) {
 		pr_warn("Tried to stop already stopped stopwatch\n");
 		dump_stack();
@@ -346,22 +349,20 @@ static inline void stopwatch_stop(struct rtl8186_stopwatch *sw)
 	}
 	sw->total += rtl8186_time() - sw->start_time;
 	sw->is_started = 0;
-#endif
 }
 
 static inline u32 stopwatch_elapsed(struct rtl8186_stopwatch *sw)
 {
-#if RTL8186_STOPWATCH
 	if (sw->is_started) {
 		pr_warn("Stopwatch is running!\n");
 		dump_stack();
 		return 0;
 	}
 	return sw->total;
-#else
-	return 0;
-#endif
 }
+
+#endif
+
 
 static inline struct re_private *rtl8186_priv(struct net_device *dev)
 {
@@ -546,7 +547,6 @@ static int rtl8186_rx_poll(struct napi_struct *napi, int budget)
 	unsigned int rx_tail;
 	unsigned long flags;
 	int rx = 0;
-	struct rtl8186_stopwatch rx_sw;
 
 	spin_lock_irqsave(&cp->lock, flags);
 
@@ -564,12 +564,7 @@ static int rtl8186_rx_poll(struct napi_struct *napi, int budget)
 			break;
 
 		skb = cp->rx_skb[rx_tail].skb;
-		// TODO compile this out
-		stopwatch_init(&skb->alloc_sw);
-		stopwatch_init(&skb->driver_sw);
-		stopwatch_init(&rx_sw);
 
-		stopwatch_start(&skb->driver_sw);
 		len = (status & 0x0fff) - 4; // ethernet CRC-4 bytes- are padding after the payload
 		/* Try allocating the new SKB fisrt */
 		/* If we got here, it means driver has some data for us */
@@ -596,10 +591,8 @@ static int rtl8186_rx_poll(struct napi_struct *napi, int budget)
 		// If we got here, it means we have OK packet that we can handle.
 		// now try to alloc the next skb. if it fails, we must drop the OK packet and recycle the SKB...
 
-		stopwatch_start(&skb->alloc_sw);
+		// TODO first give packet to IPSTACK then alloc SKB?
 		new_skb = rtl8186_alloc_rx_skb(cp, cp->rx_buf_sz);
-		stopwatch_stop(&skb->alloc_sw);
-
 		if (unlikely(!new_skb)) {
 			printk_ratelimited(KERN_WARNING
 					   "%s: napi_alloc_skb failed!\n",
@@ -621,19 +614,7 @@ static int rtl8186_rx_poll(struct napi_struct *napi, int budget)
 		skb_put(skb, len);
 
 		/* Publish the arrived packet to network stack */
-		stopwatch_stop(&skb->driver_sw);
-
-		stopwatch_start(&rx_sw);
 		rtl8186_rx_skb(cp, skb, desc);
-		stopwatch_stop(&rx_sw);
-
-#if RTL8186_PROFILE_RX
-		{
-			u32 rx_total = stopwatch_elapsed(&rx_sw);
-			pr_info("RX processing took %d usec\n",
-				clockticks_to_usec(rx_total));
-		}
-#endif
 
 	setup_new_skb:
 		mapping = (u32)new_skb->data | UNCACHE_MASK;
@@ -800,7 +781,6 @@ static int rtl8186_start_xmit_internal(struct sk_buff *skb,
 	int available;
 	DMA_DESC *txd;
 	u32 eor;
-	u32 total, alloc_total;
 
 	available = TX_HQBUFFS_AVAIL(cp);
 
@@ -840,18 +820,6 @@ static int rtl8186_start_xmit_internal(struct sk_buff *skb,
 	netdev_sent_queue(dev, skb->len); /* for BQL */
 #endif
 
-	if (skb->driver_sw.is_started) {
-		stopwatch_stop(&skb->driver_sw);
-		total = stopwatch_elapsed(&skb->driver_sw);
-		alloc_total = stopwatch_elapsed(&skb->alloc_sw);
-
-#if RTL8186_PROFILE_FORWARDING
-		pr_info("SKB processing took %d usec. alloc took %d usec\n",
-			clockticks_to_usec(total),
-			clockticks_to_usec(alloc_total));
-#endif
-	}
-
 	cp->tx_skb[entry].skb = skb;
 	cp->tx_hqhead = NEXT_TX(entry);
 
@@ -863,10 +831,6 @@ static int rtl8186_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	struct re_private *cp = rtl8186_priv(dev);
 	unsigned long flags;
 	int ret;
-
-	if (skb->driver_sw.total > 0) {
-		stopwatch_start(&skb->driver_sw);
-	}
 
 	// TODO is spinlock really required here?
 	spin_lock_irqsave(&cp->lock, flags);
