@@ -192,20 +192,14 @@ enum RTL8186_THRESHOLD_REGS {
 	RINGSIZE = RXRINGSIZE_64,
 
 	LOOPBACK = (0x3 << 8),
-	AcceptErr = 0x20, /* Accept packets with CRC errors */
-	AcceptRunt = 0x10, /* Accept runt (<64 bytes) packets */
-	AcceptBroadcast = 0x08, /* Accept broadcast packets */
-	AcceptMulticast = 0x04, /* Accept multicast packets */
-	AcceptMyPhys = 0x02, /* Accept pkts with our MAC as dest */
-	AcceptAllPhys = 0x01, /* Accept all pkts w/ physical dest */
-	AcceptAll = AcceptBroadcast | AcceptMulticast | AcceptMyPhys |
-		    AcceptAllPhys | AcceptErr | AcceptRunt, // TODO don't accept crap
-	AcceptNoBroad = AcceptMulticast | AcceptMyPhys | AcceptAllPhys |
-			AcceptErr | AcceptRunt,
-	AcceptNoMulti = AcceptMyPhys | AcceptAllPhys | AcceptErr | AcceptRunt,
-	NoErrAccept = AcceptBroadcast | AcceptMulticast | AcceptMyPhys |
-		      AcceptAllPhys,
 
+	AcceptFlowControl = BIT(6),
+	AcceptErr = BIT(5), /* Accept packets with CRC errors */
+	AcceptRunt = BIT(4), /* Accept runt (<64 bytes) packets */
+	AcceptBroadcast = BIT(3), /* Accept broadcast packets */
+	AcceptMulticast = BIT(2), /* Accept multicast packets */
+	AcceptMyPhys = BIT(1), /* Accept pkts with our MAC as dest */
+	AcceptAllPhys = BIT(0), /* Accept all pkts w/ physical dest */
 };
 
 enum RTL8186_ISR_REGS {
@@ -878,6 +872,20 @@ static void rtl8186_reset_hw(struct re_private *cp)
 	printk(KERN_ERR "%s: hardware reset timeout\n", cp->dev->name);
 }
 
+static void rtl8186_set_rx_mode(struct net_device *dev)
+{
+	struct re_private *cp = rtl8186_priv(dev);
+	u32 rx_mode = AcceptMyPhys | AcceptMulticast | AcceptBroadcast;
+
+	if (dev->flags & IFF_PROMISC) {
+		rx_mode |= AcceptAllPhys;
+	} else if ((!(dev->flags & IFF_ALLMULTI)) && netdev_mc_empty(dev)) {
+		rx_mode &= ~AcceptMulticast;
+	}
+
+	RTL_W32(RCR, rx_mode);
+}
+
 static inline void rtl8186_start_hw(struct re_private *cp)
 {
 	// set TX/RX setting/enable TX/RX
@@ -891,6 +899,7 @@ static void rtl8186_init_hw(struct re_private *cp)
 	u8 status;
 
 	rtl8186_reset_hw(cp);
+	rtl8186_set_rx_mode(dev);
 	RTL_W8(CMD,
 	       0x2); /* RX checksum offload enable, VLAN de-tagging disable */
 
@@ -903,7 +912,6 @@ static void rtl8186_init_hw(struct re_private *cp)
 	RTL_W16(TxCDO1, 0);
 	RTL_W32(TxFDP2, (u32)(cp->tx_lqring));
 	RTL_W16(TxCDO2, 0);
-	RTL_W32(RCR, AcceptAll);
 	RTL_W32(TCR, 0xC00);
 	RTL_W8(RxRingSize, RINGSIZE);
 	status = RTL_R8(MSR);
@@ -1171,14 +1179,16 @@ static void rtl8186_change_mac_address(struct net_device *dev, u8 *mac)
 {
 	struct re_private *cp = rtl8186_priv(dev);
 	unsigned long flags;
+	u8 mac_buf[8] = {0};
 
 	spin_lock_irqsave(&cp->lock,
 			  flags); // TODO is this lock should really be here??
 
+	memcpy(mac_buf, mac, 6);
 	memmove(dev->dev_addr, mac, 6);
 
-	RTL_W32(IDR0, dev->dev_addr + 0);
-	RTL_W32(IDR4, dev->dev_addr + 4); // TODO fix this
+	RTL_W32(IDR0, *((u32 *)mac_buf));
+	RTL_W32(IDR4, *((u32 *)(mac_buf + 4)));
 
 	spin_unlock_irqrestore(&cp->lock, flags);
 }
@@ -1276,6 +1286,7 @@ static const struct net_device_ops rtl8186_netdev_ops = {
 	.ndo_get_stats = rtl8186_get_stats,
 	.ndo_start_xmit = rtl8186_start_xmit,
 	.ndo_tx_timeout = rtl8186_tx_timeout,
+	.ndo_set_rx_mode = rtl8186_set_rx_mode,
 	// .ndo_change_mtu = rtl8186_change_mtu,
 };
 
