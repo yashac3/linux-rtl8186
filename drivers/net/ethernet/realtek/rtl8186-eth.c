@@ -232,6 +232,7 @@ enum RTL8186_IOCMD_REG {
 
 // We can't have RX_EMPTY interrupt with NAPI. napi introduces latencies
 // that sometimes make the RX ring full of not-handled-yet packets.
+// TODO: Understand what RX_EMPTY, TX_EMPTY really mean.
 static const u32 rtl8186_intr_mask = LINK_CHG | RX_OK | RX_ERR |
 				     TX_OK | TX_ERR; // SW_INT | RX_FIFOOVR | TX_EMPTY | RX_EMPTY
 
@@ -250,34 +251,34 @@ struct ring_info {
 
 // TODO reorder struct elements for cache performance
 struct re_private {
-	unsigned tx_hqhead;
-	unsigned tx_hqtail;
-	unsigned tx_lqhead; // TODO remove
-	unsigned tx_lqtail; // TODO remove
-	unsigned rx_tail;
+	struct ring_info rx_skb[RTL8186_RX_RING_SIZE];
+	struct ring_info tx_skb[RTL8186_TX_RING_SIZE];
+
+	DMA_DESC *rx_ring;
+	unsigned int rx_tail;
+	unsigned int rx_buf_sz;
+
+	unsigned int tx_hqhead;
+	unsigned int tx_hqtail;
+	DMA_DESC *tx_hqring;
 	void *regs;
+
 	struct net_device *dev;
 	spinlock_t lock;
+	u16 intr_mask;
+	struct net_device_stats net_stats;
 
 	struct napi_struct rx_napi;
 	struct napi_struct tx_napi;
 
-	DMA_DESC *rx_ring;
-	DMA_DESC *tx_hqring;
-	DMA_DESC *tx_lqring; // TODO remove
-	struct ring_info tx_skb[RTL8186_TX_RING_SIZE];
-	struct ring_info rx_skb[RTL8186_RX_RING_SIZE];
-	unsigned rx_buf_sz;
-	dma_addr_t ring_dma;
 	u32 msg_enable;
-	struct net_device_stats net_stats;
 	struct sk_buff *frag_skb;
 	unsigned dropping_frag : 1;
 	char *rxdesc_buf;
 	char *txdesc_buf;
 	struct mii_if_info mii_if;
 	unsigned int phy_type;
-	u16 intr_mask;
+	DMA_DESC *tx_lqring; // TODO remove
 };
 
 static int rtl8186_tx(struct re_private *cp, int budget);
@@ -366,7 +367,7 @@ static inline struct re_private *rtl8186_priv(struct net_device *dev)
 	return netdev_priv(dev);
 }
 
-static void rtl8186_set_intr_mask(struct re_private *cp, u16 intr_mask)
+static inline void rtl8186_set_intr_mask(struct re_private *cp, u16 intr_mask)
 {
 	cp->intr_mask = intr_mask;
 	RTL_W16(IMR, intr_mask);
@@ -437,14 +438,22 @@ static void rtl8186_rx_err_acct(struct re_private *cp, unsigned rx_tail,
 				u32 status, u32 len)
 {
 	cp->net_stats.rx_errors++;
-	if (status & RxErrFrame)
+
+	if (status & RxErrFrame) {
 		cp->net_stats.rx_frame_errors++;
+		printk_ratelimited(KERN_WARNING "%s: Frame error!\n",
+					cp->dev->name);
+	}
 	if (status & RxErrCRC)
 		cp->net_stats.rx_crc_errors++;
 	if (status & RxErrRunt)
 		cp->net_stats.rx_length_errors++;
-	if ((status & (FirstFrag | LastFrag)) != (FirstFrag | LastFrag))
+	if ((status & (FirstFrag | LastFrag)) != (FirstFrag | LastFrag)) {
 		cp->dev->stats.rx_length_errors++;
+		printk_ratelimited(KERN_WARNING
+				"%s: Got fragmented packet from device. Dropping!\n",
+				cp->dev->name);
+	}
 }
 
 // static void rtl8186_rx_frag (struct re_private *cp, unsigned rx_tail,
@@ -511,23 +520,10 @@ static void rtl8186_rx_err_acct(struct re_private *cp, unsigned rx_tail,
 // 	}
 // }
 
-static inline void rtl8186_rx_checksum(struct sk_buff *skb, u32 status)
+
+static inline struct sk_buff *rtl8186_alloc_rx_skb(struct re_private *cp)
 {
-	unsigned int protocol = (status >> 16) & 0x3;
-
-	skb_checksum_none_assert(skb);
-
-	if ((protocol == RxProtoTCP && !(status & TCPFail)) ||
-	    (protocol == RxProtoUDP && !(status & UDPFail)) ||
-	    (protocol == RxProtoIP && !(status & IPFail))) {
-		skb->ip_summed = CHECKSUM_UNNECESSARY;
-	}
-}
-
-static struct sk_buff *rtl8186_alloc_rx_skb(struct re_private *cp,
-					    unsigned int len)
-{
-	struct sk_buff *skb = napi_alloc_skb(&cp->rx_napi, len + RX_OFFSET * 2);
+	struct sk_buff *skb = napi_alloc_skb(&cp->rx_napi, cp->rx_buf_sz + RX_OFFSET * 2);
 	if (!skb)
 		return NULL;
 
@@ -538,63 +534,66 @@ static struct sk_buff *rtl8186_alloc_rx_skb(struct re_private *cp,
 	return skb;
 }
 
+static inline void rtl8186_fill_rx_desc(struct re_private *cp, int index,
+					DMA_DESC *desc, void *buf) {
+	desc->addr = ((u32)buf) | UNCACHE_MASK;
+	desc->opts2 = 0;
+	if (index == (RTL8186_RX_RING_SIZE - 1))
+		desc->opts1 = (DescOwn | RingEnd | cp->rx_buf_sz);
+	else
+		desc->opts1 = (DescOwn | cp->rx_buf_sz);
+}
+
+
 static int rtl8186_rx_poll(struct napi_struct *napi, int budget)
 {
 	struct re_private *cp = container_of(napi, struct re_private, rx_napi);
-	unsigned int rx_tail;
 	unsigned long flags;
 	struct list_head rx_list;
+	DMA_DESC *desc;
 	struct sk_buff *skb;
+	struct sk_buff *new_skb;
+	unsigned int rx_tail;
+	u32 status;
+	u32 protocol;
+	u32 len;
 	int rx = 0;
 	int rx_bytes = 0;
 
 	spin_lock_irqsave(&cp->lock, flags);
-
 	INIT_LIST_HEAD(&rx_list);
-
 	rx_tail = cp->rx_tail;
 
-	while (rx < budget) {
-		u32 status, len;
-		dma_addr_t mapping;
-		struct sk_buff *new_skb;
-		DMA_DESC *desc;
-
+	for (rx = 0; rx < budget; rx++) {
 		desc = &cp->rx_ring[rx_tail];
-		status = desc->opts1;
+		status = READ_ONCE(desc->opts1);
 		if (status & DescOwn)
 			break;
 
-		skb = cp->rx_skb[rx_tail].skb;
+		len = (status & 0x0fff) - 4;
+		protocol = (status >> 16) & 0x3;
 
-		len = (status & 0x0fff) - 4; // ethernet CRC-4 bytes- are padding after the payload
+		skb = cp->rx_skb[rx_tail].skb;
 		/* Try allocating the new SKB fisrt */
 		/* If we got here, it means driver has some data for us */
 		/* On errors, just recycle the same SKB */
 		new_skb = skb;
-		// TODO remove insane recycle logic
 
-		if ((status & (FirstFrag | LastFrag)) !=
-		    (FirstFrag | LastFrag)) {
+		/* If we got here, it means driver has some data for us */
+		/* On errors, just recycle the same SKB */
+		if ((status & (FirstFrag | LastFrag)) != (FirstFrag | LastFrag)) {
 			rtl8186_rx_err_acct(cp, rx_tail, status, len);
-			printk_ratelimited(
-				KERN_WARNING
-				"%s: Got fragmented packet from device. Dropping!\n",
-				cp->dev->name);
 			goto setup_new_skb;
 		}
-		if (status & (RxError)) {
+		if (status & RxError) {
+			printk_ratelimited(KERN_WARNING "%s: RX error\n", cp->dev->name);
 			rtl8186_rx_err_acct(cp, rx_tail, status, len);
-			printk_ratelimited(KERN_WARNING "%s: RX error!\n",
-					   cp->dev->name);
 			goto setup_new_skb;
 		}
 
-		// If we got here, it means we have OK packet that we can handle.
-		// now try to alloc the next skb. if it fails, we must drop the OK packet and recycle the SKB...
-
-		// TODO first give packet to IPSTACK then alloc SKB?
-		new_skb = rtl8186_alloc_rx_skb(cp, cp->rx_buf_sz);
+		/* If we got here, it means we have OK packet that we can handle. */
+		/* Now try to alloc the next skb. if it fails, we must drop the OK packet and recycle the SKB... */
+		new_skb = rtl8186_alloc_rx_skb(cp);
 		if (unlikely(!new_skb)) {
 			printk_ratelimited(KERN_WARNING
 					   "%s: napi_alloc_skb failed!\n",
@@ -604,34 +603,25 @@ static int rtl8186_rx_poll(struct napi_struct *napi, int budget)
 			goto setup_new_skb;
 		}
 
-		// if (netif_msg_rx_status(cp))
-		// 	printk(KERN_DEBUG "%s: rx slot %d status 0x%x len %d\n",
-		// 	       cp->dev->name, rx_tail, status, len);
-
-		/* Handle checksum offloading for incoming packets. */
-		rtl8186_rx_checksum(skb, status);
-
 		/* The NIC never sets BIT(31) in opts2 (whether or not packets has two bytes before data) */
 		skb_reserve(skb, RX_OFFSET);
-		skb_put(skb, len);
 		rx_bytes += len;
+		skb_put(skb, len);
 
-		/* Publish the arrived packet to network stack */
+		/* Handle checksum offloading for incoming packets. */
+		// TODO drop pkt if checksum is incorrect?
+		skb_checksum_none_assert(skb);
+		if ((protocol == RxProtoTCP && !(status & TCPFail)) ||
+			(protocol == RxProtoUDP && !(status & UDPFail)) ||
+			(protocol == RxProtoIP && !(status & IPFail))) {
+			skb->ip_summed = CHECKSUM_UNNECESSARY;
+		}
+
 		list_add_tail(&skb->list, &rx_list);
-
 	setup_new_skb:
-		mapping = (u32)new_skb->data | UNCACHE_MASK;
-		cp->rx_skb[rx_tail].skb = new_skb; // TODO don't access SW ring?
-
-		desc->addr = mapping;
-		desc->opts2 = 0;
-		if (rx_tail == (RTL8186_RX_RING_SIZE - 1))
-			desc->opts1 = (DescOwn | RingEnd | cp->rx_buf_sz);
-		else
-			desc->opts1 = (DescOwn | cp->rx_buf_sz);
-
+		cp->rx_skb[rx_tail].skb = new_skb;
+		rtl8186_fill_rx_desc(cp, rx_tail, desc, new_skb->data);
 		rx_tail = NEXT_RX(rx_tail);
-		++rx;
 	}
 
 	cp->net_stats.rx_bytes += rx_bytes;
@@ -641,9 +631,6 @@ static int rtl8186_rx_poll(struct napi_struct *napi, int budget)
 		skb->protocol = eth_type_trans(skb, cp->dev);
 	}
 	netif_receive_skb_list(&rx_list);
-
-	// if (!rx_work)
-	// printk(KERN_WARNING "%s: rx work limit reached\n", cp->dev->name);
 
 	cp->rx_tail = rx_tail;
 
@@ -726,6 +713,11 @@ static irqreturn_t rtl8186_interrupt(int irq, void *dev_instance)
 		printk_ratelimited("%s: rx error. status=0x%04x\n", dev->name,
 				   status);
 	}
+
+	// if (unlikely(status & RX_FIFOOVR)) {
+	// 	printk_ratelimited("%s: RX FIFO overflow. status=0x%04x\n", dev->name,
+	// 			   status);
+	// }
 
 out_unlock:
 	spin_unlock(&cp->lock);
@@ -977,14 +969,14 @@ static void rtl8186_init_hw(struct re_private *cp)
 
 /* TODO refactor to a function that renews single entry */
 /* TODO maybe always use same buffers for TX/RX? Copy them when they arrive, and call build_skb */
-static int rtl8186_refill_rx(struct re_private *cp)
+static int rtl8186_refill_rx_init(struct re_private *cp)
 {
 	int i;
 
 	for (i = 0; i < RTL8186_RX_RING_SIZE; i++) {
 		struct sk_buff *skb;
 
-		skb = rtl8186_alloc_rx_skb(cp, cp->rx_buf_sz);
+		skb = rtl8186_alloc_rx_skb(cp);
 		if (!skb)
 			goto err_out;
 
@@ -995,16 +987,7 @@ static int rtl8186_refill_rx(struct re_private *cp)
 			printk(KERN_DEBUG "skb->data unaligment %8x\n",
 			       (u32)skb->data);
 
-		// set to noncache area
-		cp->rx_ring[i].addr = ((u32)skb->data) | UNCACHE_MASK;
-
-		if (i == (RTL8186_RX_RING_SIZE - 1))
-			cp->rx_ring[i].opts1 =
-				(DescOwn | RingEnd | cp->rx_buf_sz);
-		else
-			cp->rx_ring[i].opts1 = (DescOwn | cp->rx_buf_sz);
-
-		cp->rx_ring[i].opts2 = 0;
+		rtl8186_fill_rx_desc(cp, i, &cp->rx_ring[i], skb->data);
 	}
 
 	return 0;
@@ -1054,7 +1037,7 @@ static int rtl8186_init_rings(struct re_private *cp)
 	cp->rx_tail = 0;
 	cp->tx_hqhead = cp->tx_hqtail = 0;
 
-	return rtl8186_refill_rx(cp);
+	return rtl8186_refill_rx_init(cp);
 }
 
 static int rtl8186_alloc_rings(struct re_private *cp)
