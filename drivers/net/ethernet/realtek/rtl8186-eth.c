@@ -11,6 +11,7 @@
 #define RTL8186_FAST_BRIDGE_HACK 0
 #define RTL8186_PROFILE_FORWARDING 0
 #define RTL8186_PROFILE_RX 0
+#define RTL8186_STOPWATCH 0
 
 #define DRV_NAME "rtl8186-eth"
 #define DRV_VERSION "1.0"
@@ -198,7 +199,7 @@ enum RTL8186_THRESHOLD_REGS {
 	AcceptMyPhys = 0x02, /* Accept pkts with our MAC as dest */
 	AcceptAllPhys = 0x01, /* Accept all pkts w/ physical dest */
 	AcceptAll = AcceptBroadcast | AcceptMulticast | AcceptMyPhys |
-		    AcceptAllPhys | AcceptErr | AcceptRunt,
+		    AcceptAllPhys | AcceptErr | AcceptRunt, // TODO don't accept crap
 	AcceptNoBroad = AcceptMulticast | AcceptMyPhys | AcceptAllPhys |
 			AcceptErr | AcceptRunt,
 	AcceptNoMulti = AcceptMyPhys | AcceptAllPhys | AcceptErr | AcceptRunt,
@@ -225,9 +226,9 @@ enum RTL8186_IOCMD_REG {
 	RX_FIFO = 2,
 	TX_FIFO = 1,
 	TX_MIT = 1,
-	TX_POLL = 1 << 0,
+	TX_POLL = 1 << 0, // it's actually TXFNH - high priority enable
 	CMD_CONFIG = 0x3c | RX_MIT << 8 | RX_FIFO << 11 | RX_TIMER << 13 |
-		     TX_MIT << 16 | TX_FIFO << 19,
+		     TX_MIT << 16 | TX_FIFO << 19, // TODO 0x3c is enabling some bits... DOCUMENT it
 };
 
 #define RX_INTERRUPTS (RX_OK | RX_ERR | RX_EMPTY | RX_FIFOOVR)
@@ -249,11 +250,13 @@ struct ring_info {
 	struct sk_buff *skb;
 };
 
+
+// TODO reorder struct elements for cache performance
 struct re_private {
 	unsigned tx_hqhead;
 	unsigned tx_hqtail;
-	unsigned tx_lqhead;
-	unsigned tx_lqtail;
+	unsigned tx_lqhead; // TODO remove
+	unsigned tx_lqtail; // TODO remove
 	unsigned rx_tail;
 	void *regs;
 	struct net_device *dev;
@@ -264,7 +267,7 @@ struct re_private {
 
 	DMA_DESC *rx_ring;
 	DMA_DESC *tx_hqring;
-	DMA_DESC *tx_lqring;
+	DMA_DESC *tx_lqring; // TODO remove
 	struct ring_info tx_skb[RTL8186_TX_RING_SIZE];
 	struct ring_info rx_skb[RTL8186_RX_RING_SIZE];
 	unsigned rx_buf_sz;
@@ -311,15 +314,18 @@ static inline u32 clockticks_to_usec(u32 ticks)
 	return (ticks * 45) / 1000;
 }
 
-static void stopwatch_init(struct rtl8186_stopwatch *sw)
+static inline void stopwatch_init(struct rtl8186_stopwatch *sw)
 {
+#if RTL8186_STOPWATCH
 	sw->is_started = 0;
 	sw->start_time = 0;
 	sw->total = 0;
+#endif
 }
 
-static void stopwatch_start(struct rtl8186_stopwatch *sw)
+static inline void stopwatch_start(struct rtl8186_stopwatch *sw)
 {
+#if RTL8186_STOPWATCH
 	if (sw->is_started) {
 		pr_warn("Tried to start already started stopwatch\n");
 		dump_stack();
@@ -327,10 +333,12 @@ static void stopwatch_start(struct rtl8186_stopwatch *sw)
 	}
 	sw->is_started = 1;
 	sw->start_time = rtl8186_time();
+#endif
 }
 
-static void stopwatch_stop(struct rtl8186_stopwatch *sw)
+static inline void stopwatch_stop(struct rtl8186_stopwatch *sw)
 {
+#if RTL8186_STOPWATCH
 	if (!sw->is_started) {
 		pr_warn("Tried to stop already stopped stopwatch\n");
 		dump_stack();
@@ -338,16 +346,21 @@ static void stopwatch_stop(struct rtl8186_stopwatch *sw)
 	}
 	sw->total += rtl8186_time() - sw->start_time;
 	sw->is_started = 0;
+#endif
 }
 
-static u32 stopwatch_elapsed(struct rtl8186_stopwatch *sw)
+static inline u32 stopwatch_elapsed(struct rtl8186_stopwatch *sw)
 {
+#if RTL8186_STOPWATCH
 	if (sw->is_started) {
 		pr_warn("Stopwatch is running!\n");
 		dump_stack();
 		return 0;
 	}
 	return sw->total;
+#else
+	return 0;
+#endif
 }
 
 static inline struct re_private *rtl8186_priv(struct net_device *dev)
@@ -551,17 +564,18 @@ static int rtl8186_rx_poll(struct napi_struct *napi, int budget)
 			break;
 
 		skb = cp->rx_skb[rx_tail].skb;
+		// TODO compile this out
 		stopwatch_init(&skb->alloc_sw);
 		stopwatch_init(&skb->driver_sw);
 		stopwatch_init(&rx_sw);
 
 		stopwatch_start(&skb->driver_sw);
-		len = (status & 0x0fff) -
-		      4; // ethernet CRC-4 bytes- are padding after the payload
+		len = (status & 0x0fff) - 4; // ethernet CRC-4 bytes- are padding after the payload
 		/* Try allocating the new SKB fisrt */
 		/* If we got here, it means driver has some data for us */
 		/* On errors, just recycle the same SKB */
 		new_skb = skb;
+		// TODO remove insane recycle logic
 
 		if ((status & (FirstFrag | LastFrag)) !=
 		    (FirstFrag | LastFrag)) {
@@ -623,7 +637,7 @@ static int rtl8186_rx_poll(struct napi_struct *napi, int budget)
 
 	setup_new_skb:
 		mapping = (u32)new_skb->data | UNCACHE_MASK;
-		cp->rx_skb[rx_tail].skb = new_skb;
+		cp->rx_skb[rx_tail].skb = new_skb; // TODO don't access SW ring?
 
 		desc->addr = mapping;
 		desc->opts2 = 0;
@@ -794,7 +808,8 @@ static int rtl8186_start_xmit_internal(struct sk_buff *skb,
 	if (available <= 0) {
 		netif_stop_queue(dev);
 		printk_ratelimited("%s: TX ring is full!\n", dev->name);
-		return NETDEV_TX_BUSY;
+		return NETDEV_TX_BUSY; // TODO they say you shouldn't do this.
+		// TODO stop the queue before shit happens.
 	}
 
 	entry = cp->tx_hqhead;
@@ -853,6 +868,7 @@ static int rtl8186_start_xmit(struct sk_buff *skb, struct net_device *dev)
 		stopwatch_start(&skb->driver_sw);
 	}
 
+	// TODO is spinlock really required here?
 	spin_lock_irqsave(&cp->lock, flags);
 	ret = rtl8186_start_xmit_internal(skb, cp, dev);
 	spin_unlock_irqrestore(&cp->lock, flags);
@@ -925,7 +941,7 @@ static void rtl8186_init_hw(struct re_private *cp)
 	RTL_W8(RxRingSize, RINGSIZE);
 	status = RTL_R8(MSR);
 
-	status = status & ~(TXFCE | RXFCE);
+	status = status & ~(TXFCE | RXFCE); // TODO why disable FlowControl
 	RTL_W8(MSR, status);
 
 	cp->phy_type = mdio_read(dev, 0, 3);
@@ -1012,6 +1028,7 @@ err_out:
 static void rtl8186_tx_timeout(struct net_device *dev, unsigned int txqueue)
 {
 	struct re_private *cp = rtl8186_priv(dev);
+	// TODO this is accessed before spinlock is taken...
 	unsigned tx_head = cp->tx_hqhead;
 	unsigned tx_tail = cp->tx_hqtail;
 	unsigned long flags;
@@ -1026,7 +1043,7 @@ static void rtl8186_tx_timeout(struct net_device *dev, unsigned int txqueue)
 			break;
 		skb = cp->tx_skb[tx_tail].skb;
 		if (!skb)
-			BUG();
+			BUG(); // TODO remove this...
 		cp->net_stats.tx_packets++;
 		cp->net_stats.tx_bytes += skb->len;
 		napi_consume_skb(skb, 0);
@@ -1092,6 +1109,7 @@ static void rtl8186_clean_rings(struct re_private *cp)
 {
 	unsigned i;
 
+	// TODO verify buffer not used by hardware?
 	for (i = 0; i < RTL8186_RX_RING_SIZE; i++) {
 		if (cp->rx_skb[i].skb) {
 			napi_consume_skb(cp->rx_skb[i].skb, 0);
