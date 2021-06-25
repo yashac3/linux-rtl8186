@@ -543,16 +543,21 @@ static int rtl8186_rx_poll(struct napi_struct *napi, int budget)
 	struct re_private *cp = container_of(napi, struct re_private, rx_napi);
 	unsigned int rx_tail;
 	unsigned long flags;
+	struct list_head rx_list;
+	struct sk_buff *skb;
 	int rx = 0;
+	int rx_bytes = 0;
 
 	spin_lock_irqsave(&cp->lock, flags);
+
+	INIT_LIST_HEAD(&rx_list);
 
 	rx_tail = cp->rx_tail;
 
 	while (rx < budget) {
 		u32 status, len;
 		dma_addr_t mapping;
-		struct sk_buff *skb, *new_skb;
+		struct sk_buff *new_skb;
 		DMA_DESC *desc;
 
 		desc = &cp->rx_ring[rx_tail];
@@ -609,9 +614,10 @@ static int rtl8186_rx_poll(struct napi_struct *napi, int budget)
 		/* The NIC never sets BIT(31) in opts2 (whether or not packets has two bytes before data) */
 		skb_reserve(skb, RX_OFFSET);
 		skb_put(skb, len);
+		rx_bytes += len;
 
 		/* Publish the arrived packet to network stack */
-		rtl8186_rx_skb(cp, skb, desc);
+		list_add_tail(&skb->list, &rx_list);
 
 	setup_new_skb:
 		mapping = (u32)new_skb->data | UNCACHE_MASK;
@@ -627,6 +633,14 @@ static int rtl8186_rx_poll(struct napi_struct *napi, int budget)
 		rx_tail = NEXT_RX(rx_tail);
 		++rx;
 	}
+
+	cp->net_stats.rx_bytes += rx_bytes;
+	cp->net_stats.rx_packets += rx;
+
+	list_for_each_entry(skb, &rx_list, list) {
+		skb->protocol = eth_type_trans(skb, cp->dev);
+	}
+	netif_receive_skb_list(&rx_list);
 
 	// if (!rx_work)
 	// printk(KERN_WARNING "%s: rx work limit reached\n", cp->dev->name);
