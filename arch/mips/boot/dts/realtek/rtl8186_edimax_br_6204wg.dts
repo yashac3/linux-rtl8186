@@ -35,11 +35,11 @@
 		};
 		partition@10000 {
 			label = "kernel";
-			reg = <0x10000 0x130000>;
+			reg = <0x10000 0x120000>;
 		};
-		partition@140000 {
+		partition@130000 {
 			label = "rootfs";
-			reg = <0x140000 0xc0000>;
+			reg = <0x130000 0xd0000>;
 		};
 	};
 };
