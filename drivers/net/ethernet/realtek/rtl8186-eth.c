@@ -217,7 +217,7 @@ enum RTL8186_ISR_REGS {
 enum RTL8186_IOCMD_REG {
 	TXFNH = BIT(0), // High priority DMA-Ethernet transmit enable
 	TXFNL = BIT(1), // Low priority DMA-Ethernet transmit enable
-	MIITXEnable = BIT(2),
+	MIITxEnable = BIT(2),
 	MIIRxEnable = BIT(3),
 	RxIntMitigation = 1 << 8, /* Setting this to 0 generates endless interrupts */
 	RXFTH = 1 << 11, /* 0 doesn't work, breaks reception of big packets */
@@ -226,7 +226,7 @@ enum RTL8186_IOCMD_REG {
 	TXTH = 0 << 19, /* 0 works */
 
 	// TODO 0x30 undocumented, was in original driver
-	CMD_CONFIG = 0x30 | MIIRxEnable | MIITXEnable | RxIntMitigation |
+	CMD_CONFIG = 0x30 | MIIRxEnable | MIITxEnable | RxIntMitigation |
 					RXFTH | RxPktTimer | TxIntMitigation | TXTH,
 };
 
@@ -287,7 +287,7 @@ static void rtl8186_tx_timeout(struct net_device *dev, unsigned int txqueue);
 static void rtl8186_change_mac_address(struct net_device *dev, u8 *mac);
 static int rtl8186_set_mac_address(struct net_device *dev, void *p);
 static int rtl8186_start_xmit(struct sk_buff *skb, struct net_device *dev);
-static int rtl8186_start_xmit_internal(struct sk_buff *skb,
+static inline int rtl8186_start_xmit_internal(struct sk_buff *skb,
 				       struct re_private *cp,
 				       struct net_device *dev);
 
@@ -769,6 +769,7 @@ static int rtl8186_tx(struct re_private *cp, int budget)
 	netdev_completed_queue(dev, pkts_compl, bytes_compl); /* for BQL */
 #endif
 
+	// TODO >1
 	if (netif_queue_stopped(dev) && (TX_HQBUFFS_AVAIL(cp) > 0)) {
 		netif_wake_queue(dev);
 	}
@@ -776,7 +777,7 @@ static int rtl8186_tx(struct re_private *cp, int budget)
 	return pkts_compl;
 }
 
-static int rtl8186_start_xmit_internal(struct sk_buff *skb,
+static inline int rtl8186_start_xmit_internal(struct sk_buff *skb,
 				       struct re_private *cp,
 				       struct net_device *dev)
 {
