@@ -1701,6 +1701,7 @@ config CPU_LX5280
 	select CPU_R3K_TLB
 	select CPU_SUPPORTS_32BIT_KERNEL
 	select CPU_LOAD_STORE_LR_EMULATION
+	select MIPS_L1_CACHE_SHIFT_4
 	help
 	  Choose this option to build a kernel for the Lexra LX5280 CPU.
 	  Lexra LX5280 implements the MIPS-I instruction set, without
