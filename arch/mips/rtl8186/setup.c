@@ -52,10 +52,7 @@ void __init rtl8186_edimax_br6204wg_setup_leds(void)
 
 void __init *plat_get_fdt(void)
 {
-	if (fw_passed_dtb)
-		return (void *)fw_passed_dtb;
-
-	return NULL;
+	return get_fdt();
 }
 
 void __init plat_mem_setup(void)
