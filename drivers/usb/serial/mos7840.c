@@ -883,8 +883,10 @@ static int mos7840_write(struct tty_struct *tty, struct usb_serial_port *port,
 	if (urb->transfer_buffer == NULL) {
 		urb->transfer_buffer = kmalloc(URB_TRANSFER_BUFFER_SIZE,
 					       GFP_ATOMIC);
-		if (!urb->transfer_buffer)
+		if (!urb->transfer_buffer) {
+			bytes_sent = -ENOMEM;
 			goto exit;
+		}
 	}
 	transfer_size = min(count, URB_TRANSFER_BUFFER_SIZE);
 
@@ -1382,28 +1384,6 @@ static int mos7840_get_lsr_info(struct tty_struct *tty,
 }
 
 /*****************************************************************************
- * mos7840_get_serial_info
- *      function to get information about serial port
- *****************************************************************************/
-
-static int mos7840_get_serial_info(struct tty_struct *tty,
-				   struct serial_struct *ss)
-{
-	struct usb_serial_port *port = tty->driver_data;
-	struct moschip_port *mos7840_port = usb_get_serial_port_data(port);
-
-	ss->type = PORT_16550A;
-	ss->line = mos7840_port->port->minor;
-	ss->port = mos7840_port->port->port_number;
-	ss->irq = 0;
-	ss->xmit_fifo_size = NUM_URBS * URB_TRANSFER_BUFFER_SIZE;
-	ss->baud_base = 9600;
-	ss->close_delay = 5 * HZ;
-	ss->closing_wait = 30 * HZ;
-	return 0;
-}
-
-/*****************************************************************************
  * SerialIoctl
  *	this function handles any ioctl calls to the driver
  *****************************************************************************/
@@ -1743,7 +1723,7 @@ error:
 	return status;
 }
 
-static int mos7840_port_remove(struct usb_serial_port *port)
+static void mos7840_port_remove(struct usb_serial_port *port)
 {
 	struct moschip_port *mos7840_port = usb_get_serial_port_data(port);
 
@@ -1760,8 +1740,6 @@ static int mos7840_port_remove(struct usb_serial_port *port)
 	}
 
 	kfree(mos7840_port);
-
-	return 0;
 }
 
 static struct usb_serial_driver moschip7840_4port_device = {
@@ -1783,7 +1761,6 @@ static struct usb_serial_driver moschip7840_4port_device = {
 	.probe = mos7840_probe,
 	.attach = mos7840_attach,
 	.ioctl = mos7840_ioctl,
-	.get_serial = mos7840_get_serial_info,
 	.set_termios = mos7840_set_termios,
 	.break_ctl = mos7840_break,
 	.tiocmget = mos7840_tiocmget,

@@ -54,6 +54,7 @@ struct hw_sequencer_funcs {
 	/* Embedded Display Related */
 	void (*edp_power_control)(struct dc_link *link, bool enable);
 	void (*edp_wait_for_hpd_ready)(struct dc_link *link, bool power_up);
+	void (*edp_wait_for_T12)(struct dc_link *link);
 
 	/* Pipe Programming Related */
 	void (*init_hw)(struct dc *dc);
@@ -110,12 +111,14 @@ struct hw_sequencer_funcs {
 	void (*enable_timing_synchronization)(struct dc *dc,
 			int group_index, int group_size,
 			struct pipe_ctx *grouped_pipes[]);
+	void (*enable_vblanks_synchronization)(struct dc *dc,
+			int group_index, int group_size,
+			struct pipe_ctx *grouped_pipes[]);
 	void (*setup_periodic_interrupt)(struct dc *dc,
 			struct pipe_ctx *pipe_ctx,
 			enum vline_select vline);
 	void (*set_drr)(struct pipe_ctx **pipe_ctx, int num_pipes,
-			unsigned int vmin, unsigned int vmax,
-			unsigned int vmid, unsigned int vmid_frame_number);
+			struct dc_crtc_timing_adjust adjust);
 	void (*set_static_screen_control)(struct pipe_ctx **pipe_ctx,
 			int num_pipes,
 			const struct dc_static_screen_params *events);
@@ -214,8 +217,13 @@ struct hw_sequencer_funcs {
 
 	void (*set_pipe)(struct pipe_ctx *pipe_ctx);
 
+	void (*get_dcc_en_bits)(struct dc *dc, int *dcc_en_bits);
+
 	/* Idle Optimization Related */
 	bool (*apply_idle_power_optimizations)(struct dc *dc, bool enable);
+
+	bool (*does_plane_fit_in_mall)(struct dc *dc, struct dc_plane_state *plane,
+			struct dc_cursor_attributes *cursor_attr);
 
 	bool (*is_abm_supported)(struct dc *dc,
 			struct dc_state *context, struct dc_stream_state *stream);

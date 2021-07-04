@@ -958,7 +958,7 @@ static int vchiq_irq_queue_bulk_tx_rx(struct vchiq_instance *instance,
 	struct vchiq_service *service;
 	struct bulk_waiter_node *waiter = NULL;
 	bool found = false;
-	void *userdata = NULL;
+	void *userdata;
 	int status = 0;
 	int ret;
 
@@ -997,15 +997,10 @@ static int vchiq_irq_queue_bulk_tx_rx(struct vchiq_instance *instance,
 			"found bulk_waiter %pK for pid %d", waiter,
 			current->pid);
 		userdata = &waiter->bulk_waiter;
+	} else {
+		userdata = args->userdata;
 	}
 
-	/*
-	 * FIXME address space mismatch:
-	 * args->data may be interpreted as a kernel pointer
-	 * in create_pagelist() called from vchiq_bulk_transfer(),
-	 * accessing kernel data instead of user space, based on the
-	 * address.
-	 */
 	status = vchiq_bulk_transfer(args->handle, NULL, args->data, args->size,
 				     userdata, args->mode, dir);
 
@@ -1057,14 +1052,21 @@ static inline int vchiq_get_user_ptr(void __user **buf, void __user *ubuf, int i
 		compat_uptr_t ptr32;
 		compat_uptr_t __user *uptr = ubuf;
 		ret = get_user(ptr32, uptr + index);
+		if (ret)
+			return ret;
+
 		*buf = compat_ptr(ptr32);
 	} else {
 		uintptr_t ptr, __user *uptr = ubuf;
 		ret = get_user(ptr, uptr + index);
+
+		if (ret)
+			return ret;
+
 		*buf = (void __user *)ptr;
 	}
 
-	return ret;
+	return 0;
 }
 
 struct vchiq_completion_data32 {
@@ -1715,7 +1717,7 @@ vchiq_compat_ioctl_queue_bulk(struct file *file,
 {
 	struct vchiq_queue_bulk_transfer32 args32;
 	struct vchiq_queue_bulk_transfer args;
-	enum vchiq_bulk_dir dir = (cmd == VCHIQ_IOC_QUEUE_BULK_TRANSMIT) ?
+	enum vchiq_bulk_dir dir = (cmd == VCHIQ_IOC_QUEUE_BULK_TRANSMIT32) ?
 				  VCHIQ_BULK_TRANSMIT : VCHIQ_BULK_RECEIVE;
 
 	if (copy_from_user(&args32, argp, sizeof(args32)))
@@ -2330,8 +2332,10 @@ vchiq_use_internal(struct vchiq_state *state, struct vchiq_service *service,
 	int *entity_uc;
 	int local_uc;
 
-	if (!arm_state)
+	if (!arm_state) {
+		ret = VCHIQ_ERROR;
 		goto out;
+	}
 
 	vchiq_log_trace(vchiq_susp_log_level, "%s", __func__);
 
@@ -2387,8 +2391,10 @@ vchiq_release_internal(struct vchiq_state *state, struct vchiq_service *service)
 	char entity[16];
 	int *entity_uc;
 
-	if (!arm_state)
+	if (!arm_state) {
+		ret = VCHIQ_ERROR;
 		goto out;
+	}
 
 	vchiq_log_trace(vchiq_susp_log_level, "%s", __func__);
 
@@ -2732,7 +2738,7 @@ static int vchiq_probe(struct platform_device *pdev)
 		return -ENOENT;
 	}
 
-	drvdata->fw = rpi_firmware_get(fw_node);
+	drvdata->fw = devm_rpi_firmware_get(&pdev->dev, fw_node);
 	of_node_put(fw_node);
 	if (!drvdata->fw)
 		return -EPROBE_DEFER;

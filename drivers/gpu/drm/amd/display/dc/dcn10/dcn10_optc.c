@@ -132,6 +132,22 @@ void optc1_setup_vertical_interrupt2(
 }
 
 /**
+ * Vupdate keepout can be set to a window to block the update lock for that pipe from changing.
+ * Start offset begins with vstartup and goes for x number of clocks,
+ * end offset starts from end of vupdate to x number of clocks.
+ */
+void optc1_set_vupdate_keepout(struct timing_generator *optc,
+			       struct vupdate_keepout_params *params)
+{
+	struct optc *optc1 = DCN10TG_FROM_TG(optc);
+
+	REG_SET_3(OTG_VUPDATE_KEEPOUT, 0,
+		  MASTER_UPDATE_LOCK_VUPDATE_KEEPOUT_START_OFFSET, params->start_offset,
+		  MASTER_UPDATE_LOCK_VUPDATE_KEEPOUT_END_OFFSET, params->end_offset,
+		  OTG_MASTER_UPDATE_LOCK_VUPDATE_KEEPOUT_EN, params->enable);
+}
+
+/**
  * program_timing_generator   used by mode timing set
  * Program CRTC Timing Registers - OTG_H_*, OTG_V_*, Pixel repetition.
  * Including SYNC. Call BIOS command table to program Timings.
@@ -657,6 +673,16 @@ void optc1_unlock(struct timing_generator *optc)
 
 	REG_SET(OTG_MASTER_UPDATE_LOCK, 0,
 			OTG_MASTER_UPDATE_LOCK, 0);
+}
+
+bool optc1_is_locked(struct timing_generator *optc)
+{
+	struct optc *optc1 = DCN10TG_FROM_TG(optc);
+	uint32_t locked;
+
+	REG_GET(OTG_MASTER_UPDATE_LOCK, UPDATE_LOCK_STATUS, &locked);
+
+	return (locked == 1);
 }
 
 void optc1_get_position(struct timing_generator *optc,
@@ -1513,6 +1539,7 @@ static const struct timing_generator_funcs dcn10_tg_funcs = {
 		.enable_crtc_reset = optc1_enable_crtc_reset,
 		.disable_reset_trigger = optc1_disable_reset_trigger,
 		.lock = optc1_lock,
+		.is_locked = optc1_is_locked,
 		.unlock = optc1_unlock,
 		.enable_optc_clock = optc1_enable_optc_clock,
 		.set_drr = optc1_set_drr,

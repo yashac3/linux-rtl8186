@@ -79,11 +79,11 @@ static int  whiteheat_firmware_attach(struct usb_serial *serial);
 static int  whiteheat_attach(struct usb_serial *serial);
 static void whiteheat_release(struct usb_serial *serial);
 static int  whiteheat_port_probe(struct usb_serial_port *port);
-static int  whiteheat_port_remove(struct usb_serial_port *port);
+static void whiteheat_port_remove(struct usb_serial_port *port);
 static int  whiteheat_open(struct tty_struct *tty,
 			struct usb_serial_port *port);
 static void whiteheat_close(struct usb_serial_port *port);
-static int  whiteheat_get_serial(struct tty_struct *tty,
+static void whiteheat_get_serial(struct tty_struct *tty,
 			struct serial_struct *ss);
 static void whiteheat_set_termios(struct tty_struct *tty,
 			struct usb_serial_port *port, struct ktermios *old);
@@ -170,7 +170,6 @@ static int firm_report_tx_done(struct usb_serial_port *port);
 #define COMMAND_PORT		4
 #define COMMAND_TIMEOUT		(2*HZ)	/* 2 second timeout for a command */
 #define	COMMAND_TIMEOUT_MS	2000
-#define CLOSING_DELAY		(30 * HZ)
 
 
 /*****************************************************************************
@@ -345,14 +344,12 @@ static int whiteheat_port_probe(struct usb_serial_port *port)
 	return 0;
 }
 
-static int whiteheat_port_remove(struct usb_serial_port *port)
+static void whiteheat_port_remove(struct usb_serial_port *port)
 {
 	struct whiteheat_private *info;
 
 	info = usb_get_serial_port_data(port);
 	kfree(info);
-
-	return 0;
 }
 
 static int whiteheat_open(struct tty_struct *tty, struct usb_serial_port *port)
@@ -442,21 +439,9 @@ static int whiteheat_tiocmset(struct tty_struct *tty,
 }
 
 
-static int whiteheat_get_serial(struct tty_struct *tty,
-				struct serial_struct *ss)
+static void whiteheat_get_serial(struct tty_struct *tty, struct serial_struct *ss)
 {
-	struct usb_serial_port *port = tty->driver_data;
-
-	ss->type = PORT_16654;
-	ss->line = port->minor;
-	ss->port = port->port_number;
-	ss->xmit_fifo_size = kfifo_size(&port->write_fifo);
-	ss->custom_divisor = 0;
 	ss->baud_base = 460800;
-	ss->close_delay = CLOSING_DELAY;
-	ss->closing_wait = CLOSING_DELAY;
-
-	return 0;
 }
 
 

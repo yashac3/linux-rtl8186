@@ -558,6 +558,10 @@ xs_read_stream_call(struct sock_xprt *transport, struct msghdr *msg, int flags)
 	struct rpc_rqst *req;
 	ssize_t ret;
 
+	/* Is this transport associated with the backchannel? */
+	if (!xprt->bc_serv)
+		return -ESHUTDOWN;
+
 	/* Look up and lock the request corresponding to the given XID */
 	req = xprt_lookup_bc_request(xprt, transport->recv.xid);
 	if (!req) {
@@ -829,7 +833,7 @@ xs_stream_record_marker(struct xdr_buf *xdr)
  *   EAGAIN:	The socket was blocked, please call again later to
  *		complete the request
  * ENOTCONN:	Caller needs to invoke connect logic then call again
- *    other:	Some other error occured, the request was not sent
+ *    other:	Some other error occurred, the request was not sent
  */
 static int xs_local_send_request(struct rpc_rqst *req)
 {
@@ -1006,6 +1010,8 @@ static int xs_tcp_send_request(struct rpc_rqst *req)
 			kernel_sock_shutdown(transport->sock, SHUT_RDWR);
 		return -ENOTCONN;
 	}
+	if (!transport->inet)
+		return -ENOTCONN;
 
 	xs_pktdump("packet data:",
 				req->rq_svec->iov_base,
@@ -1018,6 +1024,7 @@ static int xs_tcp_send_request(struct rpc_rqst *req)
 	 * to cope with writespace callbacks arriving _after_ we have
 	 * called sendmsg(). */
 	req->rq_xtime = ktime_get();
+	tcp_sock_set_cork(transport->inet, true);
 	while (1) {
 		status = xprt_sock_sendmsg(transport->sock, &msg, xdr,
 					   transport->xmit.offset, rm, &sent);
@@ -1032,6 +1039,8 @@ static int xs_tcp_send_request(struct rpc_rqst *req)
 		if (likely(req->rq_bytes_sent >= msglen)) {
 			req->rq_xmit_bytes_sent += transport->xmit.offset;
 			transport->xmit.offset = 0;
+			if (atomic_long_read(&xprt->xmit_queuelen) == 1)
+				tcp_sock_set_cork(transport->inet, false);
 			return 0;
 		}
 
@@ -1665,7 +1674,7 @@ static int xs_bind(struct sock_xprt *transport, struct socket *sock)
 	 * This ensures that we can continue to establish TCP
 	 * connections even when all local ephemeral ports are already
 	 * a part of some TCP connection.  This makes no difference
-	 * for UDP sockets, but also doens't harm them.
+	 * for UDP sockets, but also doesn't harm them.
 	 *
 	 * If we're asking for any reserved port (i.e. port == 0 &&
 	 * transport->xprt.resvport == 1) xs_get_srcport above will
@@ -1875,6 +1884,7 @@ static int xs_local_setup_socket(struct sock_xprt *transport)
 		xprt->stat.connect_time += (long)jiffies -
 					   xprt->stat.connect_start;
 		xprt_set_connected(xprt);
+		break;
 	case -ENOBUFS:
 		break;
 	case -ENOENT:
@@ -2162,6 +2172,7 @@ static int xs_tcp_finish_connecting(struct rpc_xprt *xprt, struct socket *sock)
 		}
 
 		xs_tcp_set_socket_timeouts(xprt, sock);
+		tcp_sock_set_nodelay(sk);
 
 		write_lock_bh(&sk->sk_callback_lock);
 
@@ -2176,7 +2187,6 @@ static int xs_tcp_finish_connecting(struct rpc_xprt *xprt, struct socket *sock)
 
 		/* socket options */
 		sock_reset_flag(sk, SOCK_LINGER);
-		tcp_sk(sk)->nonagle |= TCP_NAGLE_OFF;
 
 		xprt_clear_connected(xprt);
 
@@ -2276,10 +2286,8 @@ static void xs_tcp_setup_socket(struct work_struct *work)
 	case -EHOSTUNREACH:
 	case -EADDRINUSE:
 	case -ENOBUFS:
-		/*
-		 * xs_tcp_force_close() wakes tasks with -EIO.
-		 * We need to wake them first to ensure the
-		 * correct error code.
+		/* xs_tcp_force_close() wakes tasks with a fixed error code.
+		 * We need to wake them first to ensure the correct error code.
 		 */
 		xprt_wake_pending_tasks(xprt, status);
 		xs_tcp_force_close(xprt);
@@ -2380,7 +2388,7 @@ static void xs_error_handle(struct work_struct *work)
 }
 
 /**
- * xs_local_print_stats - display AF_LOCAL socket-specifc stats
+ * xs_local_print_stats - display AF_LOCAL socket-specific stats
  * @xprt: rpc_xprt struct containing statistics
  * @seq: output file
  *
@@ -2409,7 +2417,7 @@ static void xs_local_print_stats(struct rpc_xprt *xprt, struct seq_file *seq)
 }
 
 /**
- * xs_udp_print_stats - display UDP socket-specifc stats
+ * xs_udp_print_stats - display UDP socket-specific stats
  * @xprt: rpc_xprt struct containing statistics
  * @seq: output file
  *
@@ -2433,7 +2441,7 @@ static void xs_udp_print_stats(struct rpc_xprt *xprt, struct seq_file *seq)
 }
 
 /**
- * xs_tcp_print_stats - display TCP socket-specifc stats
+ * xs_tcp_print_stats - display TCP socket-specific stats
  * @xprt: rpc_xprt struct containing statistics
  * @seq: output file
  *

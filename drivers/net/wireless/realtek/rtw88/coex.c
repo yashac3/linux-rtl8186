@@ -787,7 +787,6 @@ static void rtw_coex_update_wl_ch_info(struct rtw_dev *rtwdev, u8 type)
 {
 	struct rtw_chip_info *chip = rtwdev->chip;
 	struct rtw_coex_dm *coex_dm = &rtwdev->coex.dm;
-	struct rtw_efuse *efuse = &rtwdev->efuse;
 	u8 link = 0;
 	u8 center_chan = 0;
 	u8 bw;
@@ -798,7 +797,7 @@ static void rtw_coex_update_wl_ch_info(struct rtw_dev *rtwdev, u8 type)
 	if (type != COEX_MEDIA_DISCONNECT)
 		center_chan = rtwdev->hal.current_channel;
 
-	if (center_chan == 0 || (efuse->share_ant && center_chan <= 14)) {
+	if (center_chan == 0) {
 		link = 0;
 		center_chan = 0;
 		bw = 0;
@@ -1607,6 +1606,7 @@ static void rtw_coex_action_bt_relink(struct rtw_dev *rtwdev)
 	struct rtw_efuse *efuse = &rtwdev->efuse;
 	struct rtw_chip_info *chip = rtwdev->chip;
 	u8 table_case, tdma_case;
+	u32 slot_type = 0;
 
 	rtw_dbg(rtwdev, RTW_DBG_COEX, "[BTCoex], %s()\n", __func__);
 
@@ -1618,6 +1618,7 @@ static void rtw_coex_action_bt_relink(struct rtw_dev *rtwdev)
 			table_case = 26;
 			if (coex_stat->bt_hid_exist &&
 			    coex_stat->bt_profile_num == 1) {
+				slot_type = TDMA_4SLOT;
 				tdma_case = 20;
 			} else {
 				tdma_case = 20;
@@ -1635,7 +1636,7 @@ static void rtw_coex_action_bt_relink(struct rtw_dev *rtwdev)
 	}
 
 	rtw_coex_table(rtwdev, false, table_case);
-	rtw_coex_tdma(rtwdev, false, tdma_case);
+	rtw_coex_tdma(rtwdev, false, tdma_case | slot_type);
 }
 
 static void rtw_coex_action_bt_idle(struct rtw_dev *rtwdev)
@@ -2323,8 +2324,11 @@ static void rtw_coex_action_wl_linkscan(struct rtw_dev *rtwdev)
 	if (efuse->share_ant) { /* Shared-Ant */
 		if (coex_stat->bt_a2dp_exist) {
 			slot_type = TDMA_4SLOT;
-			table_case = 9;
 			tdma_case = 11;
+			if (coex_stat->wl_gl_busy)
+				table_case = 26;
+			else
+				table_case = 9;
 		} else {
 			table_case = 9;
 			tdma_case = 7;
@@ -2642,6 +2646,11 @@ void rtw_coex_power_on_setting(struct rtw_dev *rtwdev)
 	/* red x issue */
 	rtw_write8(rtwdev, 0xff1a, 0x0);
 	rtw_coex_set_gnt_debug(rtwdev);
+}
+
+void rtw_coex_power_off_setting(struct rtw_dev *rtwdev)
+{
+	rtw_write16(rtwdev, REG_WIFI_BT_INFO, BIT_BT_INT_EN);
 }
 
 void rtw_coex_init_hw_config(struct rtw_dev *rtwdev, bool wifi_only)

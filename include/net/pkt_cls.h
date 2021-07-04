@@ -709,6 +709,17 @@ tc_cls_common_offload_init(struct flow_cls_common_offload *cls_common,
 		cls_common->extack = extack;
 }
 
+#if IS_ENABLED(CONFIG_NET_TC_SKB_EXT)
+static inline struct tc_skb_ext *tc_skb_ext_alloc(struct sk_buff *skb)
+{
+	struct tc_skb_ext *tc_skb_ext = skb_ext_add(skb, TC_SKB_EXT);
+
+	if (tc_skb_ext)
+		memset(tc_skb_ext, 0, sizeof(*tc_skb_ext));
+	return tc_skb_ext;
+}
+#endif
+
 enum tc_matchall_command {
 	TC_CLSMATCHALL_REPLACE,
 	TC_CLSMATCHALL_DESTROY,
@@ -782,6 +793,42 @@ struct tc_mq_qopt_offload {
 		struct tc_mq_opt_offload_graft_params graft_params;
 	};
 };
+
+enum tc_htb_command {
+	/* Root */
+	TC_HTB_CREATE, /* Initialize HTB offload. */
+	TC_HTB_DESTROY, /* Destroy HTB offload. */
+
+	/* Classes */
+	/* Allocate qid and create leaf. */
+	TC_HTB_LEAF_ALLOC_QUEUE,
+	/* Convert leaf to inner, preserve and return qid, create new leaf. */
+	TC_HTB_LEAF_TO_INNER,
+	/* Delete leaf, while siblings remain. */
+	TC_HTB_LEAF_DEL,
+	/* Delete leaf, convert parent to leaf, preserving qid. */
+	TC_HTB_LEAF_DEL_LAST,
+	/* TC_HTB_LEAF_DEL_LAST, but delete driver data on hardware errors. */
+	TC_HTB_LEAF_DEL_LAST_FORCE,
+	/* Modify parameters of a node. */
+	TC_HTB_NODE_MODIFY,
+
+	/* Class qdisc */
+	TC_HTB_LEAF_QUERY_QUEUE, /* Query qid by classid. */
+};
+
+struct tc_htb_qopt_offload {
+	struct netlink_ext_ack *extack;
+	enum tc_htb_command command;
+	u16 classid;
+	u32 parent_classid;
+	u16 qid;
+	u16 moved_qid;
+	u64 rate;
+	u64 ceil;
+};
+
+#define TC_HTB_CLASSID_ROOT U32_MAX
 
 enum tc_red_command {
 	TC_RED_REPLACE,

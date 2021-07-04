@@ -48,6 +48,12 @@ relationship between the luma and chroma line padding and stride.
 
 All components are stored with the same number of bits per component.
 
+.. raw:: latex
+
+    \footnotesize
+
+.. tabularcolumns:: |p{5.2cm}|p{1.0cm}|p{1.5cm}|p{1.9cm}|p{1.2cm}|p{1.8cm}|p{2.7cm}|
+
 .. flat-table:: Overview of Semi-Planar YUV Formats
     :header-rows:  1
     :stub-columns: 0
@@ -146,12 +152,14 @@ All components are stored with the same number of bits per component.
       - Yes
       - Linear
 
-.. note::
+.. raw:: latex
 
-   .. [1] Order of chroma samples in the second plane
-   .. [2] Indicates if planes have to be contiguous in memory or can be
-      disjoint
-   .. [3] Macroblock size in pixels
+    \normalsize
+
+.. [1] Order of chroma samples in the second plane
+.. [2] Indicates if planes have to be contiguous in memory or can be
+       disjoint
+.. [3] Macroblock size in pixels
 
 
 **Color Sample Location:**
@@ -396,9 +404,9 @@ number of lines as the luma plane.
 NV24 and NV42
 -------------
 
-Semi-planar YUV 4:4:4 formats. The chroma plane is subsampled by 2 in the
-horizontal direction. Chroma lines contain half the number of pixels and the
-same number of bytes as luma lines, and the chroma plane contains the same
+Semi-planar YUV 4:4:4 formats. The chroma plane is not subsampled.
+Chroma lines contain the same number of pixels and twice the
+number of bytes as luma lines, and the chroma plane contains the same
 number of lines as the luma plane.
 
 .. flat-table:: Sample 4x4 NV24 Image
@@ -480,6 +488,12 @@ For non-contiguous formats, no constraints are enforced by the format on the
 relationship between the luma and chroma line padding and stride.
 
 All components are stored with the same number of bits per component.
+
+.. raw:: latex
+
+    \small
+
+.. tabularcolumns:: |p{5.0cm}|p{1.1cm}|p{1.5cm}|p{2.2cm}|p{1.2cm}|p{3.7cm}|
 
 .. flat-table:: Overview of Fully Planar YUV Formats
     :header-rows:  1
@@ -565,11 +579,13 @@ All components are stored with the same number of bits per component.
       - Y, Cr, Cb
       - No
 
-.. note::
+.. raw:: latex
 
-   .. [4] Order of luma and chroma planes
-   .. [5] Indicates if planes have to be contiguous in memory or can be
-      disjoint
+    \normalsize
+
+.. [4] Order of luma and chroma planes
+.. [5] Indicates if planes have to be contiguous in memory or can be
+       disjoint
 
 
 **Color Sample Location:**

@@ -21,7 +21,7 @@ LDFLAGS_vmlinux		+= -shared -Bsymbolic -z notext \
 endif
 
 ifeq ($(CONFIG_ARM64_ERRATUM_843419),y)
-  ifeq ($(call ld-option, --fix-cortex-a53-843419),)
+  ifneq ($(CONFIG_ARM64_LD_HAS_FIX_ERRATUM_843419),y)
 $(warning ld does not support --fix-cortex-a53-843419; kernel may be susceptible to erratum)
   else
 LDFLAGS_vmlinux	+= --fix-cortex-a53-843419
@@ -175,6 +175,9 @@ vdso_install:
 	$(if $(CONFIG_COMPAT_VDSO), \
 		$(Q)$(MAKE) $(build)=arch/arm64/kernel/vdso32 $@)
 
+archprepare:
+	$(Q)$(MAKE) $(build)=arch/arm64/tools kapi
+
 # We use MRPROPER_FILES and CLEAN_FILES now
 archclean:
 	$(Q)$(MAKE) $(clean)=$(boot)
@@ -188,10 +191,12 @@ ifeq ($(KBUILD_EXTMOD),)
 # this hack.
 prepare: vdso_prepare
 vdso_prepare: prepare0
-	$(Q)$(MAKE) $(build)=arch/arm64/kernel/vdso include/generated/vdso-offsets.h
-	$(if $(CONFIG_COMPAT_VDSO),$(Q)$(MAKE) \
-		$(build)=arch/arm64/kernel/vdso32  \
-		include/generated/vdso32-offsets.h)
+	$(Q)$(MAKE) $(build)=arch/arm64/kernel/vdso \
+	include/generated/vdso-offsets.h arch/arm64/kernel/vdso/vdso.so
+ifdef CONFIG_COMPAT_VDSO
+	$(Q)$(MAKE) $(build)=arch/arm64/kernel/vdso32 \
+	include/generated/vdso32-offsets.h arch/arm64/kernel/vdso32/vdso.so
+endif
 endif
 
 define archhelp

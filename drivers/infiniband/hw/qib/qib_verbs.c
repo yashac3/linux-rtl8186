@@ -1067,7 +1067,7 @@ bail:
 
 /**
  * qib_get_counters - get various chip counters
- * @dd: the qlogic_ib device
+ * @ppd: the qlogic_ib device
  * @cntrs: counters are placed here
  *
  * Return the counters needed by recv_pma_get_portcounters().
@@ -1188,7 +1188,7 @@ full:
 	}
 }
 
-static int qib_query_port(struct rvt_dev_info *rdi, u8 port_num,
+static int qib_query_port(struct rvt_dev_info *rdi, u32 port_num,
 			  struct ib_port_attr *props)
 {
 	struct qib_ibdev *ibdev = container_of(rdi, struct qib_ibdev, rdi);
@@ -1273,7 +1273,7 @@ bail:
 	return ret;
 }
 
-static int qib_shut_down_port(struct rvt_dev_info *rdi, u8 port_num)
+static int qib_shut_down_port(struct rvt_dev_info *rdi, u32 port_num)
 {
 	struct qib_ibdev *ibdev = container_of(rdi, struct qib_ibdev, rdi);
 	struct qib_devdata *dd = dd_from_dev(ibdev);
@@ -1342,7 +1342,7 @@ struct ib_ah *qib_create_qp0_ah(struct qib_ibport *ibp, u16 dlid)
 	struct rvt_qp *qp0;
 	struct qib_pportdata *ppd = ppd_from_ibp(ibp);
 	struct qib_devdata *dd = dd_from_ppd(ppd);
-	u8 port_num = ppd->port;
+	u32 port_num = ppd->port;
 
 	memset(&attr, 0, sizeof(attr));
 	attr.type = rdma_ah_find_type(&dd->verbs_dev.rdi.ibdev, port_num);
@@ -1675,7 +1675,7 @@ void qib_unregister_ib_device(struct qib_devdata *dd)
 
 /**
  * _qib_schedule_send - schedule progress
- * @qp - the qp
+ * @qp: the qp
  *
  * This schedules progress w/o regard to the s_flags.
  *
@@ -1694,7 +1694,7 @@ bool _qib_schedule_send(struct rvt_qp *qp)
 
 /**
  * qib_schedule_send - schedule progress
- * @qp - the qp
+ * @qp: the qp
  *
  * This schedules qp progress.  The s_lock
  * should be held.

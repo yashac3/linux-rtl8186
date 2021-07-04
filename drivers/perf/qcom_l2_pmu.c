@@ -649,7 +649,7 @@ static struct attribute *l2_cache_pmu_cpumask_attrs[] = {
 	NULL,
 };
 
-static struct attribute_group l2_cache_pmu_cpumask_group = {
+static const struct attribute_group l2_cache_pmu_cpumask_group = {
 	.attrs = l2_cache_pmu_cpumask_attrs,
 };
 
@@ -665,7 +665,7 @@ static struct attribute *l2_cache_pmu_formats[] = {
 	NULL,
 };
 
-static struct attribute_group l2_cache_pmu_format_group = {
+static const struct attribute_group l2_cache_pmu_format_group = {
 	.name = "format",
 	.attrs = l2_cache_pmu_formats,
 };
@@ -676,7 +676,7 @@ static ssize_t l2cache_pmu_event_show(struct device *dev,
 	struct perf_pmu_events_attr *pmu_attr;
 
 	pmu_attr = container_of(attr, struct perf_pmu_events_attr, attr);
-	return sprintf(page, "event=0x%02llx\n", pmu_attr->id);
+	return sysfs_emit(page, "event=0x%02llx\n", pmu_attr->id);
 }
 
 #define L2CACHE_EVENT_ATTR(_name, _id)					     \
@@ -700,7 +700,7 @@ static struct attribute *l2_cache_pmu_events[] = {
 	NULL
 };
 
-static struct attribute_group l2_cache_pmu_events_group = {
+static const struct attribute_group l2_cache_pmu_events_group = {
 	.name = "events",
 	.attrs = l2_cache_pmu_events,
 };

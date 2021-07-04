@@ -184,7 +184,7 @@ static void pm8001_free(struct pm8001_hba_info *pm8001_ha)
 #ifdef PM8001_USE_TASKLET
 
 /**
- * tasklet for 64 msi-x interrupt handler
+ * pm8001_tasklet() - tasklet for 64 msi-x interrupt handler
  * @opaque: the passed general host adapter struct
  * Note: pm8001_tasklet is common for pm8001 & pm80xx
  */
@@ -267,7 +267,8 @@ static int pm8001_alloc(struct pm8001_hba_info *pm8001_ha,
 {
 	int i, count = 0, rc = 0;
 	u32 ci_offset, ib_offset, ob_offset, pi_offset;
-	struct inbound_queue_table *circularQ;
+	struct inbound_queue_table *ibq;
+	struct outbound_queue_table *obq;
 
 	spin_lock_init(&pm8001_ha->lock);
 	spin_lock_init(&pm8001_ha->bitmap_lock);
@@ -315,8 +316,8 @@ static int pm8001_alloc(struct pm8001_hba_info *pm8001_ha,
 	pm8001_ha->memoryMap.region[IOP].alignment = 32;
 
 	for (i = 0; i < count; i++) {
-		circularQ = &pm8001_ha->inbnd_q_tbl[i];
-		spin_lock_init(&circularQ->iq_lock);
+		ibq = &pm8001_ha->inbnd_q_tbl[i];
+		spin_lock_init(&ibq->iq_lock);
 		/* MPI Memory region 3 for consumer Index of inbound queues */
 		pm8001_ha->memoryMap.region[ci_offset+i].num_elements = 1;
 		pm8001_ha->memoryMap.region[ci_offset+i].element_size = 4;
@@ -345,6 +346,8 @@ static int pm8001_alloc(struct pm8001_hba_info *pm8001_ha,
 	}
 
 	for (i = 0; i < count; i++) {
+		obq = &pm8001_ha->outbnd_q_tbl[i];
+		spin_lock_init(&obq->oq_lock);
 		/* MPI Memory region 4 for producer Index of outbound queues */
 		pm8001_ha->memoryMap.region[pi_offset+i].num_elements = 1;
 		pm8001_ha->memoryMap.region[pi_offset+i].element_size = 4;
@@ -423,7 +426,7 @@ err_out_shost:
 err_out_nodev:
 	for (i = 0; i < pm8001_ha->max_memcnt; i++) {
 		if (pm8001_ha->memoryMap.region[i].virt_ptr != NULL) {
-			pci_free_consistent(pm8001_ha->pdev,
+			dma_free_coherent(&pm8001_ha->pdev->dev,
 				(pm8001_ha->memoryMap.region[i].total_len +
 				pm8001_ha->memoryMap.region[i].alignment),
 				pm8001_ha->memoryMap.region[i].virt_ptr,
@@ -466,9 +469,12 @@ static int pm8001_ioremap(struct pm8001_hba_info *pm8001_ha)
 			pm8001_ha->io_mem[logicalBar].memvirtaddr =
 				ioremap(pm8001_ha->io_mem[logicalBar].membase,
 				pm8001_ha->io_mem[logicalBar].memsize);
-			pm8001_dbg(pm8001_ha, INIT,
-				   "PCI: bar %d, logicalBar %d\n",
+			if (!pm8001_ha->io_mem[logicalBar].memvirtaddr) {
+				pm8001_dbg(pm8001_ha, INIT,
+					"Failed to ioremap bar %d, logicalBar %d",
 				   bar, logicalBar);
+				return -ENOMEM;
+			}
 			pm8001_dbg(pm8001_ha, INIT,
 				   "base addr %llx virt_addr=%llx len=%d\n",
 				   (u64)pm8001_ha->io_mem[logicalBar].membase,
@@ -540,9 +546,11 @@ static struct pm8001_hba_info *pm8001_pci_alloc(struct pci_dev *pdev,
 			tasklet_init(&pm8001_ha->tasklet[j], pm8001_tasklet,
 				(unsigned long)&(pm8001_ha->irq_vector[j]));
 #endif
-	pm8001_ioremap(pm8001_ha);
+	if (pm8001_ioremap(pm8001_ha))
+		goto failed_pci_alloc;
 	if (!pm8001_alloc(pm8001_ha, ent))
 		return pm8001_ha;
+failed_pci_alloc:
 	pm8001_free(pm8001_ha);
 	return NULL;
 }
@@ -859,7 +867,7 @@ void pm8001_get_phy_mask(struct pm8001_hba_info *pm8001_ha, int *phymask)
 }
 
 /**
- * pm8001_set_phy_settings_ven_117c_12Gb : Configure ATTO 12Gb PHY settings
+ * pm8001_set_phy_settings_ven_117c_12G() : Configure ATTO 12Gb PHY settings
  * @pm8001_ha : our adapter
  */
 static
@@ -958,6 +966,7 @@ static u32 pm8001_request_msix(struct pm8001_hba_info *pm8001_ha)
 {
 	u32 i = 0, j = 0;
 	int flag = 0, rc = 0;
+	int nr_irqs = pm8001_ha->number_of_intr;
 
 	if (pm8001_ha->chip_id != chip_8001)
 		flag &= ~IRQF_SHARED;
@@ -966,7 +975,10 @@ static u32 pm8001_request_msix(struct pm8001_hba_info *pm8001_ha)
 		   "pci_enable_msix request number of intr %d\n",
 		   pm8001_ha->number_of_intr);
 
-	for (i = 0; i < pm8001_ha->number_of_intr; i++) {
+	if (nr_irqs > ARRAY_SIZE(pm8001_ha->intr_drvname))
+		nr_irqs = ARRAY_SIZE(pm8001_ha->intr_drvname);
+
+	for (i = 0; i < nr_irqs; i++) {
 		snprintf(pm8001_ha->intr_drvname[i],
 			sizeof(pm8001_ha->intr_drvname[0]),
 			"%s-%d", pm8001_ha->name, i);
@@ -1139,8 +1151,8 @@ static int pm8001_pci_probe(struct pci_dev *pdev,
 		goto err_out_shost;
 	}
 	list_add_tail(&pm8001_ha->list, &hba_list);
-	scsi_scan_host(pm8001_ha->shost);
 	pm8001_ha->flags = PM8001F_RUN_TIME;
+	scsi_scan_host(pm8001_ha->shost);
 	return 0;
 
 err_out_shost:
@@ -1192,12 +1204,13 @@ pm8001_init_ccb_tag(struct pm8001_hba_info *pm8001_ha, struct Scsi_Host *shost,
 		goto err_out_noccb;
 	}
 	for (i = 0; i < ccb_count; i++) {
-		pm8001_ha->ccb_info[i].buf_prd = pci_alloc_consistent(pdev,
+		pm8001_ha->ccb_info[i].buf_prd = dma_alloc_coherent(&pdev->dev,
 				sizeof(struct pm8001_prd) * PM8001_MAX_DMA_SG,
-				&pm8001_ha->ccb_info[i].ccb_dma_handle);
+				&pm8001_ha->ccb_info[i].ccb_dma_handle,
+				GFP_KERNEL);
 		if (!pm8001_ha->ccb_info[i].buf_prd) {
 			pm8001_dbg(pm8001_ha, FAIL,
-				   "pm80xx: ccb prd memory allocation error\n");
+				   "ccb prd memory allocation error\n");
 			goto err_out;
 		}
 		pm8001_ha->ccb_info[i].task = NULL;

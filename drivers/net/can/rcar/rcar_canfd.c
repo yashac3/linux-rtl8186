@@ -617,7 +617,7 @@ static void rcar_canfd_tx_failure_cleanup(struct net_device *ndev)
 	u32 i;
 
 	for (i = 0; i < RCANFD_FIFO_DEPTH; i++)
-		can_free_echo_skb(ndev, i);
+		can_free_echo_skb(ndev, i, NULL);
 }
 
 static int rcar_canfd_reset_controller(struct rcar_canfd_global *gpriv)
@@ -1044,7 +1044,7 @@ static void rcar_canfd_tx_done(struct net_device *ndev)
 		stats->tx_packets++;
 		stats->tx_bytes += priv->tx_len[sent];
 		priv->tx_len[sent] = 0;
-		can_get_echo_skb(ndev, sent);
+		can_get_echo_skb(ndev, sent, NULL);
 
 		spin_lock_irqsave(&priv->tx_lock, flags);
 		priv->tx_tail++;
@@ -1390,7 +1390,7 @@ static netdev_tx_t rcar_canfd_start_xmit(struct sk_buff *skb,
 	}
 
 	priv->tx_len[priv->tx_head % RCANFD_FIFO_DEPTH] = cf->len;
-	can_put_echo_skb(skb, ndev, priv->tx_head % RCANFD_FIFO_DEPTH);
+	can_put_echo_skb(skb, ndev, priv->tx_head % RCANFD_FIFO_DEPTH, 0);
 
 	spin_lock_irqsave(&priv->tx_lock, flags);
 	priv->tx_head++;

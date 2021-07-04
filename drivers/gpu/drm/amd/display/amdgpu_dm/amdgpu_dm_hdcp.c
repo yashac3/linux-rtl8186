@@ -191,7 +191,7 @@ void hdcp_update_display(struct hdcp_workqueue *hdcp_work,
 				psp_set_srm(hdcp_work->hdcp.config.psp.handle, hdcp_work->srm, hdcp_work->srm_size,
 					    &hdcp_work->srm_version);
 
-			display->adjust.disable = 0;
+			display->adjust.disable = MOD_HDCP_DISPLAY_NOT_DISABLE;
 			if (content_type == DRM_MODE_HDCP_CONTENT_TYPE0) {
 				hdcp_w->link.adjust.hdcp1.disable = 0;
 				hdcp_w->link.adjust.hdcp2.force_type = MOD_HDCP_FORCE_TYPE_0;
@@ -203,7 +203,7 @@ void hdcp_update_display(struct hdcp_workqueue *hdcp_work,
 			schedule_delayed_work(&hdcp_w->property_validate_dwork,
 					      msecs_to_jiffies(DRM_HDCP_CHECK_PERIOD_MS));
 		} else {
-			display->adjust.disable = 1;
+			display->adjust.disable = MOD_HDCP_DISPLAY_DISABLE_AUTHENTICATION;
 			hdcp_w->encryption_status = MOD_HDCP_ENCRYPTION_STATUS_HDCP_OFF;
 			cancel_delayed_work(&hdcp_w->property_validate_dwork);
 		}
@@ -376,7 +376,7 @@ static void event_cpirq(struct work_struct *work)
 }
 
 
-void hdcp_destroy(struct hdcp_workqueue *hdcp_work)
+void hdcp_destroy(struct kobject *kobj, struct hdcp_workqueue *hdcp_work)
 {
 	int i = 0;
 
@@ -385,6 +385,7 @@ void hdcp_destroy(struct hdcp_workqueue *hdcp_work)
 		cancel_delayed_work_sync(&hdcp_work[i].watchdog_timer_dwork);
 	}
 
+	sysfs_remove_bin_file(kobj, &hdcp_work[0].attr);
 	kfree(hdcp_work->srm);
 	kfree(hdcp_work->srm_temp);
 	kfree(hdcp_work);
@@ -433,6 +434,7 @@ static void update_config(void *handle, struct cp_psp_stream_config *config)
 	int link_index = aconnector->dc_link->link_index;
 	struct mod_hdcp_display *display = &hdcp_work[link_index].display;
 	struct mod_hdcp_link *link = &hdcp_work[link_index].link;
+	struct drm_connector_state *conn_state;
 
 	if (config->dpms_off) {
 		hdcp_remove_display(hdcp_work, link_index, aconnector);
@@ -449,16 +451,22 @@ static void update_config(void *handle, struct cp_psp_stream_config *config)
 		link->mode = mod_hdcp_signal_type_to_operation_mode(aconnector->dc_sink->sink_signal);
 
 	display->controller = CONTROLLER_ID_D0 + config->otg_inst;
-	display->dig_fe = config->stream_enc_inst;
-	link->dig_be = config->link_enc_inst;
+	display->dig_fe = config->dig_fe;
+	link->dig_be = config->dig_be;
 	link->ddc_line = aconnector->dc_link->ddc_hw_inst + 1;
 	link->dp.rev = aconnector->dc_link->dpcd_caps.dpcd_rev.raw;
-	link->dp.mst_supported = config->mst_supported;
-	display->adjust.disable = 1;
+	link->dp.assr_enabled = config->assr_enabled;
+	link->dp.mst_enabled = config->mst_enabled;
+	display->adjust.disable = MOD_HDCP_DISPLAY_DISABLE_AUTHENTICATION;
 	link->adjust.auth_delay = 3;
 	link->adjust.hdcp1.disable = 0;
+	conn_state = aconnector->base.state;
 
-	hdcp_update_display(hdcp_work, link_index, aconnector, DRM_MODE_HDCP_CONTENT_TYPE0, false);
+	pr_debug("[HDCP_DM] display %d, CP %d, type %d\n", aconnector->base.index,
+			(!!aconnector->base.state) ? aconnector->base.state->content_protection : -1,
+			(!!aconnector->base.state) ? aconnector->base.state->hdcp_content_type : -1);
+
+	hdcp_update_display(hdcp_work, link_index, aconnector, conn_state->hdcp_content_type, false);
 }
 
 
@@ -642,6 +650,7 @@ struct hdcp_workqueue *hdcp_create_workqueue(struct amdgpu_device *adev, struct 
 
 	/* File created at /sys/class/drm/card0/device/hdcp_srm*/
 	hdcp_work[0].attr = data_attr;
+	sysfs_bin_attr_init(&hdcp_work[0].attr);
 
 	if (sysfs_create_bin_file(&adev->dev->kobj, &hdcp_work[0].attr))
 		DRM_WARN("Failed to create device file hdcp_srm");

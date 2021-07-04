@@ -250,11 +250,6 @@ should also read
 :ref:`Documentation/process/stable-kernel-rules.rst <stable_kernel_rules>`
 in addition to this file.
 
-Note, however, that some subsystem maintainers want to come to their own
-conclusions on which patches should go to the stable trees.  The networking
-maintainer, in particular, would rather not see individual developers
-adding lines like the above to their patches.
-
 If changes affect userland-kernel interfaces, please send the MAN-PAGES
 maintainer (as listed in the MAINTAINERS file) a man-pages patch, or at
 least a notification of the change, so that some information makes its way
@@ -345,6 +340,16 @@ receive comments within a week or so; if that does not happen, make sure
 that you have sent your patches to the right place.  Wait for a minimum of
 one week before resubmitting or pinging reviewers - possibly longer during
 busy times like merge windows.
+
+It's also ok to resend the patch or the patch series after a couple of
+weeks with the word "RESEND" added to the subject line::
+
+   [PATCH Vx RESEND] sub/sys: Condensed patch summary
+
+Don't add "RESEND" when you are submitting a modified version of your
+patch or patch series - "RESEND" only applies to resubmission of a
+patch or patch series which have not been modified in any way from the
+previous submission.
 
 
 Include PATCH in the subject
@@ -556,6 +561,11 @@ which stable kernel versions should receive your fix. This is the preferred
 method for indicating a bug fixed by the patch. See :ref:`describe_changes`
 for more details.
 
+Note: Attaching a Fixes: tag does not subvert the stable kernel rules
+process nor the requirement to Cc: stable@vger.kernel.org on all stable 
+patch candidates. For more information, please read
+:ref:`Documentation/process/stable-kernel-rules.rst <stable_kernel_rules>`
+     
 .. _the_canonical_patch_format:
 
 The canonical patch format
@@ -625,16 +635,19 @@ not considered part of the summary phrase, but describe how the patch
 should be treated.  Common tags might include a version descriptor if
 the multiple versions of the patch have been sent out in response to
 comments (i.e., "v1, v2, v3"), or "RFC" to indicate a request for
-comments.  If there are four patches in a patch series the individual
-patches may be numbered like this: 1/4, 2/4, 3/4, 4/4.  This assures
-that developers understand the order in which the patches should be
-applied and that they have reviewed or applied all of the patches in
-the patch series.
+comments.
 
-A couple of example Subjects::
+If there are four patches in a patch series the individual patches may
+be numbered like this: 1/4, 2/4, 3/4, 4/4. This assures that developers
+understand the order in which the patches should be applied and that
+they have reviewed or applied all of the patches in the patch series.
+
+Here are some good example Subjects::
 
     Subject: [PATCH 2/5] ext2: improve scalability of bitmap searching
     Subject: [PATCH v2 01/27] x86: fix eflags tracking
+    Subject: [PATCH v2] sub/sys: Condensed patch summary
+    Subject: [PATCH v2 M/N] sub/sys: Condensed patch summary
 
 The ``from`` line must be the very first line in the message body,
 and has the form:
@@ -647,37 +660,77 @@ then the ``From:`` line from the email header will be used to determine
 the patch author in the changelog.
 
 The explanation body will be committed to the permanent source
-changelog, so should make sense to a competent reader who has long
-since forgotten the immediate details of the discussion that might
-have led to this patch.  Including symptoms of the failure which the
-patch addresses (kernel log messages, oops messages, etc.) is
-especially useful for people who might be searching the commit logs
-looking for the applicable patch.  If a patch fixes a compile failure,
-it may not be necessary to include _all_ of the compile failures; just
-enough that it is likely that someone searching for the patch can find
-it.  As in the ``summary phrase``, it is important to be both succinct as
-well as descriptive.
+changelog, so should make sense to a competent reader who has long since
+forgotten the immediate details of the discussion that might have led to
+this patch. Including symptoms of the failure which the patch addresses
+(kernel log messages, oops messages, etc.) are especially useful for
+people who might be searching the commit logs looking for the applicable
+patch. The text should be written in such detail so that when read
+weeks, months or even years later, it can give the reader the needed
+details to grasp the reasoning for **why** the patch was created.
 
-The ``---`` marker line serves the essential purpose of marking for patch
-handling tools where the changelog message ends.
+If a patch fixes a compile failure, it may not be necessary to include
+_all_ of the compile failures; just enough that it is likely that
+someone searching for the patch can find it. As in the ``summary
+phrase``, it is important to be both succinct as well as descriptive.
 
-One good use for the additional comments after the ``---`` marker is for
-a ``diffstat``, to show what files have changed, and the number of
-inserted and deleted lines per file.  A ``diffstat`` is especially useful
-on bigger patches.  Other comments relevant only to the moment or the
-maintainer, not suitable for the permanent changelog, should also go
-here.  A good example of such comments might be ``patch changelogs``
-which describe what has changed between the v1 and v2 version of the
-patch.
+The ``---`` marker line serves the essential purpose of marking for
+patch handling tools where the changelog message ends.
 
-If you are going to include a ``diffstat`` after the ``---`` marker, please
-use ``diffstat`` options ``-p 1 -w 70`` so that filenames are listed from
-the top of the kernel source tree and don't use too much horizontal
-space (easily fit in 80 columns, maybe with some indentation).  (``git``
-generates appropriate diffstats by default.)
+One good use for the additional comments after the ``---`` marker is
+for a ``diffstat``, to show what files have changed, and the number of
+inserted and deleted lines per file. A ``diffstat`` is especially useful
+on bigger patches. If you are going to include a ``diffstat`` after the
+``---`` marker, please use ``diffstat`` options ``-p 1 -w 70`` so that
+filenames are listed from the top of the kernel source tree and don't
+use too much horizontal space (easily fit in 80 columns, maybe with some
+indentation). (``git`` generates appropriate diffstats by default.)
+
+Other comments relevant only to the moment or the maintainer, not
+suitable for the permanent changelog, should also go here. A good
+example of such comments might be ``patch changelogs`` which describe
+what has changed between the v1 and v2 version of the patch.
+
+Please put this information **after** the ``---`` line which separates
+the changelog from the rest of the patch. The version information is
+not part of the changelog which gets committed to the git tree. It is
+additional information for the reviewers. If it's placed above the
+commit tags, it needs manual interaction to remove it. If it is below
+the separator line, it gets automatically stripped off when applying the
+patch::
+
+  <commit message>
+  ...
+  Signed-off-by: Author <author@mail>
+  ---
+  V2 -> V3: Removed redundant helper function
+  V1 -> V2: Cleaned up coding style and addressed review comments
+
+  path/to/file | 5+++--
+  ...
 
 See more details on the proper patch format in the following
 references.
+
+Backtraces in commit mesages
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Backtraces help document the call chain leading to a problem. However,
+not all backtraces are helpful. For example, early boot call chains are
+unique and obvious. Copying the full dmesg output verbatim, however,
+adds distracting information like timestamps, module lists, register and
+stack dumps.
+
+Therefore, the most useful backtraces should distill the relevant
+information from the dump, which makes it easier to focus on the real
+issue. Here is an example of a well-trimmed backtrace::
+
+  unchecked MSR access error: WRMSR to 0xd51 (tried to write 0x0000000000000064)
+  at rIP: 0xffffffffae059994 (native_write_msr+0x4/0x20)
+  Call Trace:
+  mba_wrmsr
+  update_domains
+  rdtgroup_mkdir
 
 .. _explicit_in_reply_to:
 
@@ -769,13 +822,13 @@ Greg Kroah-Hartman, "How to piss off a kernel subsystem maintainer".
   <http://www.kroah.com/log/linux/maintainer-06.html>
 
 NO!!!! No more huge patch bombs to linux-kernel@vger.kernel.org people!
-  <https://lkml.org/lkml/2005/7/11/336>
+  <https://lore.kernel.org/r/20050711.125305.08322243.davem@davemloft.net>
 
 Kernel Documentation/process/coding-style.rst:
   :ref:`Documentation/process/coding-style.rst <codingstyle>`
 
 Linus Torvalds's mail on the canonical patch format:
-  <http://lkml.org/lkml/2005/4/7/183>
+  <https://lore.kernel.org/r/Pine.LNX.4.58.0504071023190.28951@ppc970.osdl.org>
 
 Andi Kleen, "On submitting kernel patches"
   Some strategies to get difficult or controversial changes in.

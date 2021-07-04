@@ -173,7 +173,6 @@ extern int ldsem_down_write_nested(struct ld_semaphore *sem, int subclass,
 
 
 struct tty_ldisc_ops {
-	int	magic;
 	char	*name;
 	int	num;
 	int	flags;
@@ -185,7 +184,8 @@ struct tty_ldisc_ops {
 	void	(*close)(struct tty_struct *);
 	void	(*flush_buffer)(struct tty_struct *tty);
 	ssize_t	(*read)(struct tty_struct *tty, struct file *file,
-			unsigned char __user *buf, size_t nr);
+			unsigned char *buf, size_t nr,
+			void **cookie, unsigned long offset);
 	ssize_t	(*write)(struct tty_struct *tty, struct file *file,
 			 const unsigned char *buf, size_t nr);
 	int	(*ioctl)(struct tty_struct *tty, struct file *file,
@@ -216,8 +216,6 @@ struct tty_ldisc {
 	struct tty_ldisc_ops *ops;
 	struct tty_struct *tty;
 };
-
-#define TTY_LDISC_MAGIC	0x5403
 
 #define LDISC_FLAG_DEFINED	0x00000001
 

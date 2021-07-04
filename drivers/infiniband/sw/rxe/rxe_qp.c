@@ -62,6 +62,17 @@ int rxe_qp_chk_init(struct rxe_dev *rxe, struct ib_qp_init_attr *init)
 	struct rxe_port *port;
 	int port_num = init->port_num;
 
+	switch (init->qp_type) {
+	case IB_QPT_SMI:
+	case IB_QPT_GSI:
+	case IB_QPT_RC:
+	case IB_QPT_UC:
+	case IB_QPT_UD:
+		break;
+	default:
+		return -EOPNOTSUPP;
+	}
+
 	if (!init->recv_cq || !init->send_cq) {
 		pr_warn("missing cq\n");
 		goto err1;
@@ -231,6 +242,7 @@ static int rxe_qp_init_req(struct rxe_dev *rxe, struct rxe_qp *qp,
 	if (err) {
 		vfree(qp->sq.queue->buf);
 		kfree(qp->sq.queue);
+		qp->sq.queue = NULL;
 		return err;
 	}
 
@@ -284,6 +296,7 @@ static int rxe_qp_init_resp(struct rxe_dev *rxe, struct rxe_qp *qp,
 		if (err) {
 			vfree(qp->rq.queue->buf);
 			kfree(qp->rq.queue);
+			qp->rq.queue = NULL;
 			return err;
 		}
 	}
@@ -344,6 +357,11 @@ int rxe_qp_from_init(struct rxe_dev *rxe, struct rxe_qp *qp, struct rxe_pd *pd,
 err2:
 	rxe_queue_cleanup(qp->sq.queue);
 err1:
+	qp->pd = NULL;
+	qp->rcq = NULL;
+	qp->scq = NULL;
+	qp->srq = NULL;
+
 	if (srq)
 		rxe_drop_ref(srq);
 	rxe_drop_ref(scq);

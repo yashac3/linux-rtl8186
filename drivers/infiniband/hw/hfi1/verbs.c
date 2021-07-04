@@ -729,7 +729,7 @@ bail_txadd:
 
 /**
  * update_tx_opstats - record stats by opcode
- * @qp; the qp
+ * @qp: the qp
  * @ps: transmit packet state
  * @plen: the plen in dwords
  *
@@ -1145,7 +1145,7 @@ static inline int egress_pkey_matches_entry(u16 pkey, u16 ent)
  * egress_pkey_check - check P_KEY of a packet
  * @ppd:  Physical IB port data
  * @slid: SLID for packet
- * @bkey: PKEY for header
+ * @pkey: PKEY for header
  * @sc5:  SC for packet
  * @s_pkey_index: It will be used for look up optimization for kernel contexts
  * only. If it is negative value, then it means user contexts is calling this
@@ -1206,7 +1206,7 @@ bad:
 	return 1;
 }
 
-/**
+/*
  * get_send_routine - choose an egress routine
  *
  * Choose an egress routine based on QP type
@@ -1407,7 +1407,7 @@ static inline u16 opa_width_to_ib(u16 in)
 	}
 }
 
-static int query_port(struct rvt_dev_info *rdi, u8 port_num,
+static int query_port(struct rvt_dev_info *rdi, u32 port_num,
 		      struct ib_port_attr *props)
 {
 	struct hfi1_ibdev *verbs_dev = dev_from_rdi(rdi);
@@ -1485,7 +1485,7 @@ bail:
 	return ret;
 }
 
-static int shut_down_port(struct rvt_dev_info *rdi, u8 port_num)
+static int shut_down_port(struct rvt_dev_info *rdi, u32 port_num)
 {
 	struct hfi1_ibdev *verbs_dev = dev_from_rdi(rdi);
 	struct hfi1_devdata *dd = dd_from_dev(verbs_dev);
@@ -1694,7 +1694,7 @@ static int init_cntr_names(const char *names_in,
 }
 
 static struct rdma_hw_stats *alloc_hw_stats(struct ib_device *ibdev,
-					    u8 port_num)
+					    u32 port_num)
 {
 	int i, err;
 
@@ -1758,7 +1758,7 @@ static u64 hfi1_sps_ints(void)
 }
 
 static int get_hw_stats(struct ib_device *ibdev, struct rdma_hw_stats *stats,
-			u8 port, int index)
+			u32 port, int index)
 {
 	u64 *values;
 	int count;

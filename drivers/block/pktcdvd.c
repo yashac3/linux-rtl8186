@@ -722,7 +722,7 @@ static int pkt_generic_packet(struct pktcdvd_device *pd, struct packet_command *
 	if (cgc->quiet)
 		rq->rq_flags |= RQF_QUIET;
 
-	blk_execute_rq(rq->q, pd->bdev->bd_disk, rq, 0);
+	blk_execute_rq(pd->bdev->bd_disk, rq, 0);
 	if (scsi_req(rq)->result)
 		ret = -EIO;
 out:
@@ -1197,6 +1197,42 @@ try_next_bio:
 	spin_unlock(&pd->cdrw.active_list_lock);
 
 	return 1;
+}
+
+/**
+ * bio_list_copy_data - copy contents of data buffers from one chain of bios to
+ * another
+ * @src: source bio list
+ * @dst: destination bio list
+ *
+ * Stops when it reaches the end of either the @src list or @dst list - that is,
+ * copies min(src->bi_size, dst->bi_size) bytes (or the equivalent for lists of
+ * bios).
+ */
+static void bio_list_copy_data(struct bio *dst, struct bio *src)
+{
+	struct bvec_iter src_iter = src->bi_iter;
+	struct bvec_iter dst_iter = dst->bi_iter;
+
+	while (1) {
+		if (!src_iter.bi_size) {
+			src = src->bi_next;
+			if (!src)
+				break;
+
+			src_iter = src->bi_iter;
+		}
+
+		if (!dst_iter.bi_size) {
+			dst = dst->bi_next;
+			if (!dst)
+				break;
+
+			dst_iter = dst->bi_iter;
+		}
+
+		bio_copy_data_iter(dst, &dst_iter, src, &src_iter);
+	}
 }
 
 /*
@@ -2374,7 +2410,7 @@ static blk_qc_t pkt_submit_bio(struct bio *bio)
 
 	blk_queue_split(&bio);
 
-	pd = bio->bi_disk->queue->queuedata;
+	pd = bio->bi_bdev->bd_disk->queue->queuedata;
 	if (!pd) {
 		pr_err("%s incorrect request queue\n", bio_devname(bio, b));
 		goto end_io;
@@ -2418,7 +2454,7 @@ static blk_qc_t pkt_submit_bio(struct bio *bio)
 			split = bio;
 		}
 
-		pkt_make_request_write(bio->bi_disk->queue, split);
+		pkt_make_request_write(bio->bi_bdev->bd_disk->queue, split);
 	} while (split != bio);
 
 	return BLK_QC_T_NONE;

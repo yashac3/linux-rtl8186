@@ -137,6 +137,7 @@
  * @mains_online: is AC/DC input connected
  * @usb_online: is USB input connected
  * @charging_enabled: is charging enabled
+ * @irq_unsupported: is interrupt unsupported by SMB hardware
  * @max_charge_current: maximum current (in uA) the battery can be charged
  * @max_charge_voltage: maximum voltage (in uV) the battery can be charged
  * @pre_charge_current: current (in uA) to use in pre-charging phase
@@ -193,6 +194,7 @@ struct smb347_charger {
 	bool			mains_online;
 	bool			usb_online;
 	bool			charging_enabled;
+	bool			irq_unsupported;
 
 	unsigned int		max_charge_current;
 	unsigned int		max_charge_voltage;
@@ -862,6 +864,9 @@ static int smb347_irq_set(struct smb347_charger *smb, bool enable)
 {
 	int ret;
 
+	if (smb->irq_unsupported)
+		return 0;
+
 	ret = smb347_set_writable(smb, true);
 	if (ret < 0)
 		return ret;
@@ -906,11 +911,14 @@ static int smb347_irq_init(struct smb347_charger *smb,
 {
 	int ret;
 
-	ret = devm_request_threaded_irq(smb->dev, client->irq, NULL,
-					smb347_interrupt, IRQF_ONESHOT,
-					client->name, smb);
-	if (ret < 0)
-		return ret;
+	smb->irq_unsupported = true;
+
+	/*
+	 * Interrupt pin is optional. If it is connected, we setup the
+	 * interrupt support here.
+	 */
+	if (!client->irq)
+		return 0;
 
 	ret = smb347_set_writable(smb, true);
 	if (ret < 0)
@@ -923,12 +931,28 @@ static int smb347_irq_init(struct smb347_charger *smb,
 	ret = regmap_update_bits(smb->regmap, CFG_STAT,
 				 CFG_STAT_ACTIVE_HIGH | CFG_STAT_DISABLED,
 				 CFG_STAT_DISABLED);
-	if (ret < 0)
-		client->irq = 0;
 
 	smb347_set_writable(smb, false);
 
-	return ret;
+	if (ret < 0) {
+		dev_warn(smb->dev, "failed to initialize IRQ: %d\n", ret);
+		dev_warn(smb->dev, "disabling IRQ support\n");
+		return 0;
+	}
+
+	ret = devm_request_threaded_irq(smb->dev, client->irq, NULL,
+					smb347_interrupt, IRQF_ONESHOT,
+					client->name, smb);
+	if (ret)
+		return ret;
+
+	smb->irq_unsupported = false;
+
+	ret = smb347_irq_enable(smb);
+	if (ret < 0)
+		return ret;
+
+	return 0;
 }
 
 /*
@@ -1117,9 +1141,13 @@ static int smb347_get_property(struct power_supply *psy,
 	struct i2c_client *client = to_i2c_client(smb->dev);
 	int ret;
 
-	disable_irq(client->irq);
+	if (!smb->irq_unsupported)
+		disable_irq(client->irq);
+
 	ret = smb347_get_property_locked(psy, prop, val);
-	enable_irq(client->irq);
+
+	if (!smb->irq_unsupported)
+		enable_irq(client->irq);
 
 	return ret;
 }
@@ -1336,19 +1364,9 @@ static int smb347_probe(struct i2c_client *client,
 	if (ret < 0)
 		return ret;
 
-	/*
-	 * Interrupt pin is optional. If it is connected, we setup the
-	 * interrupt support here.
-	 */
-	if (client->irq) {
-		ret = smb347_irq_init(smb, client);
-		if (ret < 0) {
-			dev_warn(dev, "failed to initialize IRQ: %d\n", ret);
-			dev_warn(dev, "disabling IRQ support\n");
-		} else {
-			smb347_irq_enable(smb);
-		}
-	}
+	ret = smb347_irq_init(smb, client);
+	if (ret)
+		return ret;
 
 	return 0;
 }
@@ -1357,8 +1375,8 @@ static int smb347_remove(struct i2c_client *client)
 {
 	struct smb347_charger *smb = i2c_get_clientdata(client);
 
-	if (client->irq)
-		smb347_irq_disable(smb);
+	smb347_irq_disable(smb);
+
 	return 0;
 }
 
@@ -1383,11 +1401,10 @@ static struct i2c_driver smb347_driver = {
 		.name = "smb347",
 		.of_match_table = smb3xx_of_match,
 	},
-	.probe        = smb347_probe,
-	.remove       = smb347_remove,
-	.id_table     = smb347_id,
+	.probe = smb347_probe,
+	.remove = smb347_remove,
+	.id_table = smb347_id,
 };
-
 module_i2c_driver(smb347_driver);
 
 MODULE_AUTHOR("Bruce E. Robertson <bruce.e.robertson@intel.com>");

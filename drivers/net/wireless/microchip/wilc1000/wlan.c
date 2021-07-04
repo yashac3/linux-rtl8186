@@ -408,7 +408,8 @@ static inline u8 ac_change(struct wilc *wilc, u8 *ac)
 	return 1;
 }
 
-int wilc_wlan_txq_add_net_pkt(struct net_device *dev, void *priv, u8 *buffer,
+int wilc_wlan_txq_add_net_pkt(struct net_device *dev,
+			      struct tx_complete_data *tx_data, u8 *buffer,
 			      u32 buffer_size,
 			      void (*tx_complete_fn)(void *, int))
 {
@@ -420,27 +421,27 @@ int wilc_wlan_txq_add_net_pkt(struct net_device *dev, void *priv, u8 *buffer,
 	wilc = vif->wilc;
 
 	if (wilc->quit) {
-		tx_complete_fn(priv, 0);
+		tx_complete_fn(tx_data, 0);
 		return 0;
 	}
 
 	tqe = kmalloc(sizeof(*tqe), GFP_ATOMIC);
 
 	if (!tqe) {
-		tx_complete_fn(priv, 0);
+		tx_complete_fn(tx_data, 0);
 		return 0;
 	}
 	tqe->type = WILC_NET_PKT;
 	tqe->buffer = buffer;
 	tqe->buffer_size = buffer_size;
 	tqe->tx_complete_func = tx_complete_fn;
-	tqe->priv = priv;
+	tqe->priv = tx_data;
 	tqe->vif = vif;
 
-	q_num = ac_classify(wilc, priv);
+	q_num = ac_classify(wilc, tx_data->skb);
 	tqe->q_num = q_num;
 	if (ac_change(wilc, &q_num)) {
-		tx_complete_fn(priv, 0);
+		tx_complete_fn(tx_data, 0);
 		kfree(tqe);
 		return 0;
 	}
@@ -451,7 +452,7 @@ int wilc_wlan_txq_add_net_pkt(struct net_device *dev, void *priv, u8 *buffer,
 			tcp_process(dev, tqe);
 		wilc_wlan_txq_add_to_tail(dev, q_num, tqe);
 	} else {
-		tx_complete_fn(priv, 0);
+		tx_complete_fn(tx_data, 0);
 		kfree(tqe);
 	}
 
@@ -551,12 +552,60 @@ static struct rxq_entry_t *wilc_wlan_rxq_remove(struct wilc *wilc)
 void chip_allow_sleep(struct wilc *wilc)
 {
 	u32 reg = 0;
+	const struct wilc_hif_func *hif_func = wilc->hif_func;
+	u32 wakeup_reg, wakeup_bit;
+	u32 to_host_from_fw_reg, to_host_from_fw_bit;
+	u32 from_host_to_fw_reg, from_host_to_fw_bit;
+	u32 trials = 100;
+	int ret;
 
-	wilc->hif_func->hif_read_reg(wilc, WILC_SDIO_WAKEUP_REG, &reg);
+	if (wilc->io_type == WILC_HIF_SDIO) {
+		wakeup_reg = WILC_SDIO_WAKEUP_REG;
+		wakeup_bit = WILC_SDIO_WAKEUP_BIT;
+		from_host_to_fw_reg = WILC_SDIO_HOST_TO_FW_REG;
+		from_host_to_fw_bit = WILC_SDIO_HOST_TO_FW_BIT;
+		to_host_from_fw_reg = WILC_SDIO_FW_TO_HOST_REG;
+		to_host_from_fw_bit = WILC_SDIO_FW_TO_HOST_BIT;
+	} else {
+		wakeup_reg = WILC_SPI_WAKEUP_REG;
+		wakeup_bit = WILC_SPI_WAKEUP_BIT;
+		from_host_to_fw_reg = WILC_SPI_HOST_TO_FW_REG;
+		from_host_to_fw_bit = WILC_SPI_HOST_TO_FW_BIT;
+		to_host_from_fw_reg = WILC_SPI_FW_TO_HOST_REG;
+		to_host_from_fw_bit = WILC_SPI_FW_TO_HOST_BIT;
+	}
 
-	wilc->hif_func->hif_write_reg(wilc, WILC_SDIO_WAKEUP_REG,
-				      reg & ~WILC_SDIO_WAKEUP_BIT);
-	wilc->hif_func->hif_write_reg(wilc, WILC_SDIO_HOST_TO_FW_REG, 0);
+	while (--trials) {
+		ret = hif_func->hif_read_reg(wilc, to_host_from_fw_reg, &reg);
+		if (ret)
+			return;
+		if ((reg & to_host_from_fw_bit) == 0)
+			break;
+	}
+	if (!trials)
+		pr_warn("FW not responding\n");
+
+	/* Clear bit 1 */
+	ret = hif_func->hif_read_reg(wilc, wakeup_reg, &reg);
+	if (ret)
+		return;
+	if (reg & wakeup_bit) {
+		reg &= ~wakeup_bit;
+		ret = hif_func->hif_write_reg(wilc, wakeup_reg, reg);
+		if (ret)
+			return;
+	}
+
+	ret = hif_func->hif_read_reg(wilc, from_host_to_fw_reg, &reg);
+	if (ret)
+		return;
+	if (reg & from_host_to_fw_bit) {
+		reg &= ~from_host_to_fw_bit;
+		ret = hif_func->hif_write_reg(wilc, from_host_to_fw_reg, reg);
+		if (ret)
+			return;
+
+	}
 }
 EXPORT_SYMBOL_GPL(chip_allow_sleep);
 

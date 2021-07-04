@@ -40,6 +40,7 @@
 #include <linux/security.h>
 #include <linux/smp.h>
 #include <linux/profile.h>
+#include <linux/kfence.h>
 #include <linux/rcupdate.h>
 #include <linux/moduleparam.h>
 #include <linux/kallsyms.h>
@@ -74,7 +75,6 @@
 #include <linux/kgdb.h>
 #include <linux/ftrace.h>
 #include <linux/async.h>
-#include <linux/sfi.h>
 #include <linux/shmem_fs.h>
 #include <linux/slab.h>
 #include <linux/perf_event.h>
@@ -97,6 +97,7 @@
 #include <linux/mem_encrypt.h>
 #include <linux/kcsan.h>
 #include <linux/init_syscalls.h>
+#include <linux/stackdepot.h>
 
 #include <asm/io.h>
 #include <asm/bugs.h>
@@ -404,7 +405,7 @@ static int __init bootconfig_params(char *param, char *val,
 	return 0;
 }
 
-static void __init setup_boot_config(const char *cmdline)
+static void __init setup_boot_config(void)
 {
 	static char tmp_cmdline[COMMAND_LINE_SIZE] __initdata;
 	const char *msg;
@@ -471,7 +472,7 @@ static void __init setup_boot_config(const char *cmdline)
 
 #else
 
-static void __init setup_boot_config(const char *cmdline)
+static void __init setup_boot_config(void)
 {
 	/* Remove bootconfig data from initrd */
 	get_boot_config_from_initrd(NULL, NULL);
@@ -825,8 +826,11 @@ static void __init mm_init(void)
 	 */
 	page_ext_init_flatmem();
 	init_mem_debugging_and_hardening();
+	kfence_alloc_pool();
 	report_meminit();
+	stack_depot_init();
 	mem_init();
+	mem_init_print_info();
 	/* page_owner must be initialized after buddy is ready */
 	page_ext_init_flatmem_late();
 	kmem_cache_init();
@@ -834,12 +838,34 @@ static void __init mm_init(void)
 	pgtable_init();
 	debug_objects_mem_init();
 	vmalloc_init();
-	ioremap_huge_init();
 	/* Should be run before the first non-init thread is created */
 	init_espfix_bsp();
 	/* Should be run after espfix64 is set up. */
 	pti_init();
 }
+
+#ifdef CONFIG_HAVE_ARCH_RANDOMIZE_KSTACK_OFFSET
+DEFINE_STATIC_KEY_MAYBE_RO(CONFIG_RANDOMIZE_KSTACK_OFFSET_DEFAULT,
+			   randomize_kstack_offset);
+DEFINE_PER_CPU(u32, kstack_offset);
+
+static int __init early_randomize_kstack_offset(char *buf)
+{
+	int ret;
+	bool bool_result;
+
+	ret = kstrtobool(buf, &bool_result);
+	if (ret)
+		return ret;
+
+	if (bool_result)
+		static_branch_enable(&randomize_kstack_offset);
+	else
+		static_branch_disable(&randomize_kstack_offset);
+	return 0;
+}
+early_param("randomize_kstack_offset", early_randomize_kstack_offset);
+#endif
 
 void __init __weak arch_call_rest_init(void)
 {
@@ -869,7 +895,7 @@ asmlinkage __visible void __init __no_sanitize_address start_kernel(void)
 	pr_notice("%s", linux_banner);
 	early_security_init();
 	setup_arch(&command_line);
-	setup_boot_config(command_line);
+	setup_boot_config();
 	setup_command_line(command_line);
 	setup_nr_cpu_ids();
 	setup_per_cpu_areas();
@@ -956,6 +982,7 @@ asmlinkage __visible void __init __no_sanitize_address start_kernel(void)
 	hrtimers_init();
 	softirq_init();
 	timekeeping_init();
+	kfence_init();
 
 	/*
 	 * For best initial stack canary entropy, prepare it after:
@@ -1054,7 +1081,6 @@ asmlinkage __visible void __init __no_sanitize_address start_kernel(void)
 
 	acpi_subsystem_init();
 	arch_post_acpi_subsys_init();
-	sfi_init_late();
 	kcsan_init();
 
 	/* Do the rest non-__init'ed, we're now alive */
@@ -1423,6 +1449,7 @@ static int __ref kernel_init(void *unused)
 	async_synchronize_full();
 	kprobe_free_init_mem();
 	ftrace_free_init_mem();
+	kgdb_free_init_mem();
 	free_initmem();
 	mark_readonly();
 
@@ -1510,7 +1537,7 @@ static noinline void __init kernel_init_freeable(void)
 	 */
 	set_mems_allowed(node_states[N_MEMORY]);
 
-	cad_pid = task_pid(current);
+	cad_pid = get_pid(task_pid(current));
 
 	smp_prepare_cpus(setup_max_cpus);
 
@@ -1534,6 +1561,7 @@ static noinline void __init kernel_init_freeable(void)
 
 	kunit_run_all_tests();
 
+	wait_for_initramfs();
 	console_on_rootfs();
 
 	/*

@@ -83,7 +83,7 @@ struct hwlat_sample {
 	u64			nmi_total_ts;	/* Total time spent in NMIs */
 	struct timespec64	timestamp;	/* wall time */
 	int			nmi_count;	/* # NMIs during this sample */
-	int			count;		/* # of iteratons over threash */
+	int			count;		/* # of iterations over thresh */
 };
 
 /* keep the global state somewhere. */
@@ -108,14 +108,9 @@ static void trace_hwlat_sample(struct hwlat_sample *sample)
 	struct trace_buffer *buffer = tr->array_buffer.buffer;
 	struct ring_buffer_event *event;
 	struct hwlat_entry *entry;
-	unsigned long flags;
-	int pc;
-
-	pc = preempt_count();
-	local_save_flags(flags);
 
 	event = trace_buffer_lock_reserve(buffer, TRACE_HWLAT, sizeof(*entry),
-					  flags, pc);
+					  tracing_gen_ctx());
 	if (!event)
 		return;
 	entry	= ring_buffer_event_data(event);
@@ -394,7 +389,7 @@ static int start_kthread(struct trace_array *tr)
 }
 
 /**
- * stop_kthread - Inform the hardware latency samping/detector kthread to stop
+ * stop_kthread - Inform the hardware latency sampling/detector kthread to stop
  *
  * This kicks the running hardware latency sampling/detector kernel thread and
  * tells it to stop sampling now. Use this on unload and at system shutdown.

@@ -225,18 +225,23 @@ struct subchannel *css_alloc_subchannel(struct subchannel_id schid,
 
 	INIT_WORK(&sch->todo_work, css_sch_todo);
 	sch->dev.release = &css_subchannel_release;
+	sch->dev.dma_mask = &sch->dma_mask;
 	device_initialize(&sch->dev);
 	/*
-	 * The physical addresses of some the dma structures that can
+	 * The physical addresses for some of the dma structures that can
 	 * belong to a subchannel need to fit 31 bit width (e.g. ccw).
 	 */
-	sch->dev.coherent_dma_mask = DMA_BIT_MASK(31);
+	ret = dma_set_coherent_mask(&sch->dev, DMA_BIT_MASK(31));
+	if (ret)
+		goto err;
 	/*
 	 * But we don't have such restrictions imposed on the stuff that
 	 * is handled by the streaming API.
 	 */
-	sch->dma_mask = DMA_BIT_MASK(64);
-	sch->dev.dma_mask = &sch->dma_mask;
+	ret = dma_set_mask(&sch->dev, DMA_BIT_MASK(64));
+	if (ret)
+		goto err;
+
 	return sch;
 
 err:
@@ -646,15 +651,13 @@ static void css_sch_todo(struct work_struct *work)
 }
 
 static struct idset *slow_subchannel_set;
-static spinlock_t slow_subchannel_lock;
-static wait_queue_head_t css_eval_wq;
+static DEFINE_SPINLOCK(slow_subchannel_lock);
+static DECLARE_WAIT_QUEUE_HEAD(css_eval_wq);
 static atomic_t css_eval_scheduled;
 
 static int __init slow_subchannel_init(void)
 {
-	spin_lock_init(&slow_subchannel_lock);
 	atomic_set(&css_eval_scheduled, 0);
-	init_waitqueue_head(&css_eval_wq);
 	slow_subchannel_set = idset_sch_new();
 	if (!slow_subchannel_set) {
 		CIO_MSG_EVENT(0, "could not allocate slow subchannel set\n");
@@ -970,8 +973,11 @@ static int __init setup_css(int nr)
 	 * css->device as the device argument with the DMA API)
 	 * and are fine with 64 bit addresses.
 	 */
-	css->device.coherent_dma_mask = DMA_BIT_MASK(64);
-	css->device.dma_mask = &css->device.coherent_dma_mask;
+	ret = dma_coerce_mask_and_coherent(&css->device, DMA_BIT_MASK(64));
+	if (ret) {
+		kfree(css);
+		goto out_err;
+	}
 
 	mutex_init(&css->mutex);
 	ret = chsc_get_cssid_iid(nr, &css->cssid, &css->iid);

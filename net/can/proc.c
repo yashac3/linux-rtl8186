@@ -205,8 +205,10 @@ static void can_print_recv_banner(struct seq_file *m)
 	 *                  can1.  00000000  00000000  00000000
 	 *                 .......          0  tp20
 	 */
-	seq_puts(m, "  device   can_id   can_mask  function"
-			"  userdata   matches  ident\n");
+	if (IS_ENABLED(CONFIG_64BIT))
+		seq_puts(m, "  device   can_id   can_mask      function          userdata       matches  ident\n");
+	else
+		seq_puts(m, "  device   can_id   can_mask  function  userdata   matches  ident\n");
 }
 
 static int can_stats_proc_show(struct seq_file *m, void *v)
@@ -322,8 +324,11 @@ static int can_rcvlist_proc_show(struct seq_file *m, void *v)
 
 	/* receive list for registered CAN devices */
 	for_each_netdev_rcu(net, dev) {
-		if (dev->type == ARPHRD_CAN && dev->ml_priv)
-			can_rcvlist_proc_show_one(m, idx, dev, dev->ml_priv);
+		struct can_ml_priv *can_ml = can_get_ml_priv(dev);
+
+		if (can_ml)
+			can_rcvlist_proc_show_one(m, idx, dev,
+						  &can_ml->dev_rcv_lists);
 	}
 
 	rcu_read_unlock();
@@ -375,8 +380,10 @@ static int can_rcvlist_sff_proc_show(struct seq_file *m, void *v)
 
 	/* sff receive list for registered CAN devices */
 	for_each_netdev_rcu(net, dev) {
-		if (dev->type == ARPHRD_CAN && dev->ml_priv) {
-			dev_rcv_lists = dev->ml_priv;
+		struct can_ml_priv *can_ml = can_get_ml_priv(dev);
+
+		if (can_ml) {
+			dev_rcv_lists = &can_ml->dev_rcv_lists;
 			can_rcvlist_proc_show_array(m, dev, dev_rcv_lists->rx_sff,
 						    ARRAY_SIZE(dev_rcv_lists->rx_sff));
 		}
@@ -406,8 +413,10 @@ static int can_rcvlist_eff_proc_show(struct seq_file *m, void *v)
 
 	/* eff receive list for registered CAN devices */
 	for_each_netdev_rcu(net, dev) {
-		if (dev->type == ARPHRD_CAN && dev->ml_priv) {
-			dev_rcv_lists = dev->ml_priv;
+		struct can_ml_priv *can_ml = can_get_ml_priv(dev);
+
+		if (can_ml) {
+			dev_rcv_lists = &can_ml->dev_rcv_lists;
 			can_rcvlist_proc_show_array(m, dev, dev_rcv_lists->rx_eff,
 						    ARRAY_SIZE(dev_rcv_lists->rx_eff));
 		}

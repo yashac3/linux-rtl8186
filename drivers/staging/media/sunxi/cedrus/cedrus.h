@@ -56,7 +56,6 @@ enum cedrus_h264_pic_type {
 struct cedrus_control {
 	struct v4l2_ctrl_config cfg;
 	enum cedrus_codec	codec;
-	unsigned char		required:1;
 };
 
 struct cedrus_h264_run {
@@ -80,7 +79,7 @@ struct cedrus_h265_run {
 };
 
 struct cedrus_vp8_run {
-	const struct v4l2_ctrl_vp8_frame_header		*frame_params;
+	const struct v4l2_ctrl_vp8_frame		*frame_params;
 };
 
 struct cedrus_run {

@@ -164,7 +164,7 @@ static struct probe_trace_arg_ref *alloc_trace_arg_ref(long offs)
 /*
  * Convert a location into trace_arg.
  * If tvar == NULL, this just checks variable can be converted.
- * If fentry == true and vr_die is a parameter, do huristic search
+ * If fentry == true and vr_die is a parameter, do heuristic search
  * for the location fuzzed by function entry mcount.
  */
 static int convert_variable_location(Dwarf_Die *vr_die, Dwarf_Addr addr,
@@ -189,6 +189,9 @@ static int convert_variable_location(Dwarf_Die *vr_die, Dwarf_Addr addr,
 	if (dwarf_attr(vr_die, DW_AT_const_value, &attr) &&
 	    immediate_value_is_supported()) {
 		Dwarf_Sword snum;
+
+		if (!tvar)
+			return 0;
 
 		dwarf_formsdata(&attr, &snum);
 		ret = asprintf(&tvar->value, "\\%ld", (long)snum);
@@ -498,7 +501,7 @@ static int convert_variable_fields(Dwarf_Die *vr_die, const char *varname,
 			       " nor array.\n", varname);
 			return -EINVAL;
 		}
-		/* While prcessing unnamed field, we don't care about this */
+		/* While processing unnamed field, we don't care about this */
 		if (field->ref && dwarf_diename(vr_die)) {
 			pr_err("Semantic error: %s must be referred by '.'\n",
 			       field->name);
@@ -1187,8 +1190,10 @@ static int debuginfo__find_probe_location(struct debuginfo *dbg,
 	while (!dwarf_nextcu(dbg->dbg, off, &noff, &cuhl, NULL, NULL, NULL)) {
 		/* Get the DIE(Debugging Information Entry) of this CU */
 		diep = dwarf_offdie(dbg->dbg, off + cuhl, &pf->cu_die);
-		if (!diep)
+		if (!diep) {
+			off = noff;
 			continue;
+		}
 
 		/* Check if target file is included. */
 		if (pp->file)
@@ -1830,7 +1835,7 @@ static int line_range_walk_cb(const char *fname, int lineno,
 	    (lf->lno_s > lineno || lf->lno_e < lineno))
 		return 0;
 
-	/* Make sure this line can be reversable */
+	/* Make sure this line can be reversible */
 	if (cu_find_lineinfo(&lf->cu_die, addr, &__fname, &__lineno) > 0
 	    && (lineno != __lineno || strcmp(fname, __fname)))
 		return 0;
@@ -1949,8 +1954,10 @@ int debuginfo__find_line_range(struct debuginfo *dbg, struct line_range *lr)
 
 		/* Get the DIE(Debugging Information Entry) of this CU */
 		diep = dwarf_offdie(dbg->dbg, off + cuhl, &lf.cu_die);
-		if (!diep)
+		if (!diep) {
+			off = noff;
 			continue;
+		}
 
 		/* Check if target file is included. */
 		if (lr->file)

@@ -16,7 +16,7 @@
  * to local caches without needing to acquire swap_info
  * lock.  We do not reuse the returned slots directly but
  * move them back to the global pool in a batch.  This
- * allows the slots to coaellesce and reduce fragmentation.
+ * allows the slots to coalesce and reduce fragmentation.
  *
  * The swap entry allocated is marked with SWAP_HAS_CACHE
  * flag in map_count that prevents it from being allocated
@@ -193,8 +193,7 @@ static void drain_slots_cache_cpu(unsigned int cpu, unsigned int type,
 			cache->slots_ret = NULL;
 		}
 		spin_unlock_irq(&cache->free_lock);
-		if (slots)
-			kvfree(slots);
+		kvfree(slots);
 	}
 }
 

@@ -45,6 +45,7 @@
 #include <asm/timex.h>
 #include <asm/ap.h>
 #include <asm/uv.h>
+#include <asm/fpu/api.h>
 #include "kvm-s390.h"
 #include "gaccess.h"
 
@@ -157,18 +158,13 @@ struct kvm_stats_debugfs_item debugfs_entries[] = {
 	VCPU_STAT("instruction_diag_44", diagnose_44),
 	VCPU_STAT("instruction_diag_9c", diagnose_9c),
 	VCPU_STAT("diag_9c_ignored", diagnose_9c_ignored),
+	VCPU_STAT("diag_9c_forward", diagnose_9c_forward),
 	VCPU_STAT("instruction_diag_258", diagnose_258),
 	VCPU_STAT("instruction_diag_308", diagnose_308),
 	VCPU_STAT("instruction_diag_500", diagnose_500),
 	VCPU_STAT("instruction_diag_other", diagnose_other),
 	{ NULL }
 };
-
-struct kvm_s390_tod_clock_ext {
-	__u8 epoch_idx;
-	__u64 tod;
-	__u8 reserved[7];
-} __packed;
 
 /* allow nested virtualization in KVM (if enabled by user space) */
 static int nested;
@@ -189,6 +185,11 @@ MODULE_PARM_DESC(halt_poll_max_steal, "Maximum percentage of steal time to allow
 static bool use_gisa  = true;
 module_param(use_gisa, bool, 0644);
 MODULE_PARM_DESC(use_gisa, "Use the GISA if the host supports it.");
+
+/* maximum diag9c forwarding per second */
+unsigned int diag9c_forwarding_hz;
+module_param(diag9c_forwarding_hz, uint, 0644);
+MODULE_PARM_DESC(diag9c_forwarding_hz, "Maximum diag9c forwarding per second, 0 to turn off");
 
 /*
  * For now we handle at most 16 double words as this is what the s390 base
@@ -548,6 +549,9 @@ int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
 	case KVM_CAP_SET_GUEST_DEBUG:
 	case KVM_CAP_S390_DIAG318:
 		r = 1;
+		break;
+	case KVM_CAP_SET_GUEST_DEBUG2:
+		r = KVM_GUESTDBG_VALID_MASK;
 		break;
 	case KVM_CAP_S390_HPAGE_1M:
 		r = 0;
@@ -1165,17 +1169,17 @@ static int kvm_s390_set_tod(struct kvm *kvm, struct kvm_device_attr *attr)
 static void kvm_s390_get_tod_clock(struct kvm *kvm,
 				   struct kvm_s390_vm_tod_clock *gtod)
 {
-	struct kvm_s390_tod_clock_ext htod;
+	union tod_clock clk;
 
 	preempt_disable();
 
-	get_tod_clock_ext((char *)&htod);
+	store_tod_clock_ext(&clk);
 
-	gtod->tod = htod.tod + kvm->arch.epoch;
+	gtod->tod = clk.tod + kvm->arch.epoch;
 	gtod->epoch_idx = 0;
 	if (test_kvm_facility(kvm, 139)) {
-		gtod->epoch_idx = htod.epoch_idx + kvm->arch.epdx;
-		if (gtod->tod < htod.tod)
+		gtod->epoch_idx = clk.ei + kvm->arch.epdx;
+		if (gtod->tod < clk.tod)
 			gtod->epoch_idx += 1;
 	}
 
@@ -3866,18 +3870,18 @@ void kvm_s390_set_tod_clock(struct kvm *kvm,
 			    const struct kvm_s390_vm_tod_clock *gtod)
 {
 	struct kvm_vcpu *vcpu;
-	struct kvm_s390_tod_clock_ext htod;
+	union tod_clock clk;
 	int i;
 
 	mutex_lock(&kvm->lock);
 	preempt_disable();
 
-	get_tod_clock_ext((char *)&htod);
+	store_tod_clock_ext(&clk);
 
-	kvm->arch.epoch = gtod->tod - htod.tod;
+	kvm->arch.epoch = gtod->tod - clk.tod;
 	kvm->arch.epdx = 0;
 	if (test_kvm_facility(kvm, 139)) {
-		kvm->arch.epdx = gtod->epoch_idx - htod.epoch_idx;
+		kvm->arch.epdx = gtod->epoch_idx - clk.ei;
 		if (kvm->arch.epoch > gtod->tod)
 			kvm->arch.epdx -= 1;
 	}
@@ -4147,6 +4151,8 @@ static int __vcpu_run(struct kvm_vcpu *vcpu)
 			       vcpu->run->s.regs.gprs,
 			       sizeof(sie_page->pv_grregs));
 		}
+		if (test_cpu_flag(CIF_FPU))
+			load_fpu_regs();
 		exit_reason = sie64a(vcpu->arch.sie_block,
 				     vcpu->run->s.regs.gprs);
 		if (kvm_s390_pv_cpu_is_protected(vcpu)) {
@@ -4310,16 +4316,16 @@ static void store_regs_fmt2(struct kvm_vcpu *vcpu)
 	kvm_run->s.regs.bpbc = (vcpu->arch.sie_block->fpf & FPF_BPBC) == FPF_BPBC;
 	kvm_run->s.regs.diag318 = vcpu->arch.diag318_info.val;
 	if (MACHINE_HAS_GS) {
+		preempt_disable();
 		__ctl_set_bit(2, 4);
 		if (vcpu->arch.gs_enabled)
 			save_gs_cb(current->thread.gs_cb);
-		preempt_disable();
 		current->thread.gs_cb = vcpu->arch.host_gscb;
 		restore_gs_cb(vcpu->arch.host_gscb);
-		preempt_enable();
 		if (!vcpu->arch.host_gscb)
 			__ctl_clear_bit(2, 4);
 		vcpu->arch.host_gscb = NULL;
+		preempt_enable();
 	}
 	/* SIE will save etoken directly into SDNX and therefore kvm_run */
 }
@@ -4545,7 +4551,7 @@ int kvm_s390_vcpu_start(struct kvm_vcpu *vcpu)
 		/*
 		 * As we are starting a second VCPU, we have to disable
 		 * the IBS facility on all VCPUs to remove potentially
-		 * oustanding ENABLE requests.
+		 * outstanding ENABLE requests.
 		 */
 		__disable_ibs_on_all_vcpus(vcpu->kvm);
 	}

@@ -343,14 +343,10 @@ bool intel_dsc_source_support(const struct intel_crtc_state *crtc_state)
 		return false;
 
 	/* On TGL, DSC is supported on all Pipes */
-	if (INTEL_GEN(i915) >= 12)
+	if (DISPLAY_VER(i915) >= 12)
 		return true;
 
-	if (INTEL_GEN(i915) >= 10 &&
-	    (pipe != PIPE_A ||
-	     (cpu_transcoder == TRANSCODER_EDP ||
-	      cpu_transcoder == TRANSCODER_DSI_0 ||
-	      cpu_transcoder == TRANSCODER_DSI_1)))
+	if ((DISPLAY_VER(i915) >= 11 || IS_CANNONLAKE(i915)) && (pipe != PIPE_A || (cpu_transcoder == TRANSCODER_EDP || cpu_transcoder == TRANSCODER_DSI_0 || cpu_transcoder == TRANSCODER_DSI_1)))
 		return true;
 
 	return false;
@@ -362,7 +358,7 @@ static bool is_pipe_dsc(const struct intel_crtc_state *crtc_state)
 	const struct drm_i915_private *i915 = to_i915(crtc->base.dev);
 	enum transcoder cpu_transcoder = crtc_state->cpu_transcoder;
 
-	if (INTEL_GEN(i915) >= 12)
+	if (DISPLAY_VER(i915) >= 12)
 		return true;
 
 	if (cpu_transcoder == TRANSCODER_EDP ||
@@ -454,8 +450,6 @@ int intel_dsc_compute_params(struct intel_encoder *encoder,
 	else if (vdsc_cfg->bits_per_component == 12)
 		vdsc_cfg->mux_word_size = DSC_MUX_WORD_SIZE_12_BPC;
 
-	/* RC_MODEL_SIZE is a constant across all configurations */
-	vdsc_cfg->rc_model_size = DSC_RC_MODEL_SIZE_CONST;
 	/* InitialScaleValue is a 6 bit value with 3 fractional bits (U3.3) */
 	vdsc_cfg->initial_scale_value = (vdsc_cfg->rc_model_size << 3) /
 		(vdsc_cfg->rc_model_size - vdsc_cfg->initial_offset);
@@ -481,7 +475,7 @@ intel_dsc_power_domain(const struct intel_crtc_state *crtc_state)
 	 * the pipe in use. Hence another reference on the pipe power domain
 	 * will suffice. (Except no VDSC/joining on ICL pipe A.)
 	 */
-	if (INTEL_GEN(i915) >= 12 && !IS_ROCKETLAKE(i915) && pipe == PIPE_A)
+	if (DISPLAY_VER(i915) >= 12 && !IS_ROCKETLAKE(i915) && pipe == PIPE_A)
 		return POWER_DOMAIN_TRANSCODER_VDSC_PW2;
 	else if (is_pipe_dsc(crtc_state))
 		return POWER_DOMAIN_PIPE(pipe);
@@ -741,7 +735,7 @@ static void intel_dsc_pps_configure(const struct intel_crtc_state *crtc_state)
 
 	/* Populate PICTURE_PARAMETER_SET_9 registers */
 	pps_val = 0;
-	pps_val |= DSC_RC_MODEL_SIZE(DSC_RC_MODEL_SIZE_CONST) |
+	pps_val |= DSC_RC_MODEL_SIZE(vdsc_cfg->rc_model_size) |
 		DSC_RC_EDGE_FACTOR(DSC_RC_EDGE_FACTOR_CONST);
 	drm_info(&dev_priv->drm, "PPS9 = 0x%08x\n", pps_val);
 	if (!is_pipe_dsc(crtc_state)) {
@@ -1016,20 +1010,14 @@ static i915_reg_t dss_ctl1_reg(const struct intel_crtc_state *crtc_state)
 {
 	enum pipe pipe = to_intel_crtc(crtc_state->uapi.crtc)->pipe;
 
-	if (crtc_state->cpu_transcoder == TRANSCODER_EDP)
-		return DSS_CTL1;
-
-	return ICL_PIPE_DSS_CTL1(pipe);
+	return is_pipe_dsc(crtc_state) ? ICL_PIPE_DSS_CTL1(pipe) : DSS_CTL1;
 }
 
 static i915_reg_t dss_ctl2_reg(const struct intel_crtc_state *crtc_state)
 {
 	enum pipe pipe = to_intel_crtc(crtc_state->uapi.crtc)->pipe;
 
-	if (crtc_state->cpu_transcoder == TRANSCODER_EDP)
-		return DSS_CTL2;
-
-	return ICL_PIPE_DSS_CTL2(pipe);
+	return is_pipe_dsc(crtc_state) ? ICL_PIPE_DSS_CTL2(pipe) : DSS_CTL2;
 }
 
 void intel_dsc_enable(struct intel_encoder *encoder,

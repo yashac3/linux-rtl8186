@@ -1555,10 +1555,11 @@ static void btrfsic_release_block_ctx(struct btrfsic_block_data_ctx *block_ctx)
 		BUG_ON(!block_ctx->pagev);
 		num_pages = (block_ctx->len + (u64)PAGE_SIZE - 1) >>
 			    PAGE_SHIFT;
+		/* Pages must be unmapped in reverse order */
 		while (num_pages > 0) {
 			num_pages--;
 			if (block_ctx->datav[num_pages]) {
-				kunmap(block_ctx->pagev[num_pages]);
+				kunmap_local(block_ctx->datav[num_pages]);
 				block_ctx->datav[num_pages] = NULL;
 			}
 			if (block_ctx->pagev[num_pages]) {
@@ -1637,7 +1638,7 @@ static int btrfsic_read_block(struct btrfsic_state *state,
 		i = j;
 	}
 	for (i = 0; i < num_pages; i++)
-		block_ctx->datav[i] = kmap(block_ctx->pagev[i]);
+		block_ctx->datav[i] = kmap_local_page(block_ctx->pagev[i]);
 
 	return block_ctx->len;
 }
@@ -2674,10 +2675,10 @@ static void __btrfsic_submit_bio(struct bio *bio)
 	mutex_lock(&btrfsic_mutex);
 	/* since btrfsic_submit_bio() is also called before
 	 * btrfsic_mount(), this might return NULL */
-	dev_state = btrfsic_dev_state_lookup(bio_dev(bio) + bio->bi_partno);
+	dev_state = btrfsic_dev_state_lookup(bio->bi_bdev->bd_dev);
 	if (NULL != dev_state &&
 	    (bio_op(bio) == REQ_OP_WRITE) && bio_has_data(bio)) {
-		unsigned int i = 0;
+		int i = 0;
 		u64 dev_bytenr;
 		u64 cur_bytenr;
 		struct bio_vec bvec;
@@ -2690,9 +2691,9 @@ static void __btrfsic_submit_bio(struct bio *bio)
 		bio_is_patched = 0;
 		if (dev_state->state->print_mask &
 		    BTRFSIC_PRINT_MASK_SUBMIT_BIO_BH)
-			pr_info("submit_bio(rw=%d,0x%x, bi_vcnt=%u, bi_sector=%llu (bytenr %llu), bi_disk=%p)\n",
+			pr_info("submit_bio(rw=%d,0x%x, bi_vcnt=%u, bi_sector=%llu (bytenr %llu), bi_bdev=%p)\n",
 			       bio_op(bio), bio->bi_opf, segs,
-			       bio->bi_iter.bi_sector, dev_bytenr, bio->bi_disk);
+			       bio->bi_iter.bi_sector, dev_bytenr, bio->bi_bdev);
 
 		mapped_datav = kmalloc_array(segs,
 					     sizeof(*mapped_datav), GFP_NOFS);
@@ -2702,7 +2703,7 @@ static void __btrfsic_submit_bio(struct bio *bio)
 
 		bio_for_each_segment(bvec, bio, iter) {
 			BUG_ON(bvec.bv_len != PAGE_SIZE);
-			mapped_datav[i] = kmap(bvec.bv_page);
+			mapped_datav[i] = kmap_local_page(bvec.bv_page);
 			i++;
 
 			if (dev_state->state->print_mask &
@@ -2715,14 +2716,15 @@ static void __btrfsic_submit_bio(struct bio *bio)
 					      mapped_datav, segs,
 					      bio, &bio_is_patched,
 					      bio->bi_opf);
-		bio_for_each_segment(bvec, bio, iter)
-			kunmap(bvec.bv_page);
+		/* Unmap in reverse order */
+		for (--i; i >= 0; i--)
+			kunmap_local(mapped_datav[i]);
 		kfree(mapped_datav);
 	} else if (NULL != dev_state && (bio->bi_opf & REQ_PREFLUSH)) {
 		if (dev_state->state->print_mask &
 		    BTRFSIC_PRINT_MASK_SUBMIT_BIO_BH)
-			pr_info("submit_bio(rw=%d,0x%x FLUSH, disk=%p)\n",
-			       bio_op(bio), bio->bi_opf, bio->bi_disk);
+			pr_info("submit_bio(rw=%d,0x%x FLUSH, bdev=%p)\n",
+			       bio_op(bio), bio->bi_opf, bio->bi_bdev);
 		if (!dev_state->dummy_block_for_bio_bh_flush.is_iodone) {
 			if ((dev_state->state->print_mask &
 			     (BTRFSIC_PRINT_MASK_SUBMIT_BIO_BH |

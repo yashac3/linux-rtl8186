@@ -175,7 +175,7 @@ static int cpufreq_exit(struct cpufreq_policy *policy)
 }
 
 static struct cpufreq_driver dt_cpufreq_driver = {
-	.flags = CPUFREQ_STICKY | CPUFREQ_NEED_INITIAL_FREQ_CHECK |
+	.flags = CPUFREQ_NEED_INITIAL_FREQ_CHECK |
 		 CPUFREQ_IS_COOLING_DEV,
 	.verify = cpufreq_generic_frequency_table_verify,
 	.target_index = set_target,
@@ -255,10 +255,15 @@ static int dt_cpufreq_early_init(struct device *dev, int cpu)
 	 * before updating priv->cpus. Otherwise, we will end up creating
 	 * duplicate OPPs for the CPUs.
 	 *
-	 * OPPs might be populated at runtime, don't check for error here.
+	 * OPPs might be populated at runtime, don't fail for error here unless
+	 * it is -EPROBE_DEFER.
 	 */
-	if (!dev_pm_opp_of_cpumask_add_table(priv->cpus))
+	ret = dev_pm_opp_of_cpumask_add_table(priv->cpus);
+	if (!ret) {
 		priv->have_static_opps = true;
+	} else if (ret == -EPROBE_DEFER) {
+		goto out;
+	}
 
 	/*
 	 * The OPP table must be initialized, statically or dynamically, by this

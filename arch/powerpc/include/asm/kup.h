@@ -28,15 +28,6 @@
 
 #ifdef __ASSEMBLY__
 #ifndef CONFIG_PPC_KUAP
-.macro kuap_save_and_lock	sp, thread, gpr1, gpr2, gpr3
-.endm
-
-.macro kuap_restore	sp, current, gpr1, gpr2, gpr3
-.endm
-
-.macro kuap_check	current, gpr
-.endm
-
 .macro kuap_check_amr	gpr1, gpr2
 .endm
 
@@ -55,6 +46,14 @@ void setup_kuep(bool disabled);
 static inline void setup_kuep(bool disabled) { }
 #endif /* CONFIG_PPC_KUEP */
 
+#if defined(CONFIG_PPC_KUEP) && defined(CONFIG_PPC_BOOK3S_32)
+void kuep_lock(void);
+void kuep_unlock(void);
+#else
+static inline void kuep_lock(void) { }
+static inline void kuep_unlock(void) { }
+#endif
+
 #ifdef CONFIG_PPC_KUAP
 void setup_kuap(bool disabled);
 #else
@@ -66,7 +65,15 @@ bad_kuap_fault(struct pt_regs *regs, unsigned long address, bool is_write)
 	return false;
 }
 
-static inline void kuap_check_amr(void) { }
+static inline void kuap_assert_locked(void) { }
+static inline void kuap_save_and_lock(struct pt_regs *regs) { }
+static inline void kuap_user_restore(struct pt_regs *regs) { }
+static inline void kuap_kernel_restore(struct pt_regs *regs, unsigned long amr) { }
+
+static inline unsigned long kuap_get_and_assert_locked(void)
+{
+	return 0;
+}
 
 /*
  * book3s/64/kup-radix.h defines these functions for the !KUAP case to flush
@@ -91,6 +98,7 @@ static __always_inline void setup_kup(void)
 
 static inline void allow_read_from_user(const void __user *from, unsigned long size)
 {
+	barrier_nospec();
 	allow_user_access(NULL, from, size, KUAP_READ);
 }
 
@@ -102,6 +110,7 @@ static inline void allow_write_to_user(void __user *to, unsigned long size)
 static inline void allow_read_write_user(void __user *to, const void __user *from,
 					 unsigned long size)
 {
+	barrier_nospec();
 	allow_user_access(to, from, size, KUAP_READ_WRITE);
 }
 

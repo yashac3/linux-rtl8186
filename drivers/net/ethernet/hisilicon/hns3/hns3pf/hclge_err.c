@@ -753,8 +753,9 @@ static int hclge_config_igu_egu_hw_err_int(struct hclge_dev *hdev, bool en)
 
 	/* configure IGU,EGU error interrupts */
 	hclge_cmd_setup_basic_desc(&desc, HCLGE_IGU_COMMON_INT_EN, false);
+	desc.data[0] = cpu_to_le32(HCLGE_IGU_ERR_INT_TYPE);
 	if (en)
-		desc.data[0] = cpu_to_le32(HCLGE_IGU_ERR_INT_EN);
+		desc.data[0] |= cpu_to_le32(HCLGE_IGU_ERR_INT_EN);
 
 	desc.data[1] = cpu_to_le32(HCLGE_IGU_ERR_INT_EN_MASK);
 
@@ -865,13 +866,7 @@ static int hclge_config_tm_hw_err_int(struct hclge_dev *hdev, bool en)
 	}
 
 	/* configure TM QCN hw errors */
-	ret = hclge_cmd_query_error(hdev, &desc, HCLGE_TM_QCN_MEM_INT_CFG, 0);
-	if (ret) {
-		dev_err(dev, "fail(%d) to read TM QCN CFG status\n", ret);
-		return ret;
-	}
-
-	hclge_cmd_reuse_desc(&desc, false);
+	hclge_cmd_setup_basic_desc(&desc, HCLGE_TM_QCN_MEM_INT_CFG, false);
 	if (en)
 		desc.data[1] = cpu_to_le32(HCLGE_TM_QCN_MEM_ERR_INT_EN);
 
@@ -1073,7 +1068,7 @@ static int hclge_config_ssu_hw_err_int(struct hclge_dev *hdev, bool en)
  * This function querys number of mpf and pf buffer descriptors.
  */
 static int hclge_query_bd_num(struct hclge_dev *hdev, bool is_ras,
-			      int *mpf_bd_num, int *pf_bd_num)
+			      u32 *mpf_bd_num, u32 *pf_bd_num)
 {
 	struct device *dev = &hdev->pdev->dev;
 	u32 mpf_min_bd_num, pf_min_bd_num;
@@ -1102,7 +1097,7 @@ static int hclge_query_bd_num(struct hclge_dev *hdev, bool is_ras,
 	*mpf_bd_num = le32_to_cpu(desc_bd.data[0]);
 	*pf_bd_num = le32_to_cpu(desc_bd.data[1]);
 	if (*mpf_bd_num < mpf_min_bd_num || *pf_bd_num < pf_min_bd_num) {
-		dev_err(dev, "Invalid bd num: mpf(%d), pf(%d)\n",
+		dev_err(dev, "Invalid bd num: mpf(%u), pf(%u)\n",
 			*mpf_bd_num, *pf_bd_num);
 		return -EINVAL;
 	}
@@ -1497,7 +1492,6 @@ hclge_log_and_clear_rocee_ras_error(struct hclge_dev *hdev)
 	}
 
 	status = le32_to_cpu(desc[0].data[0]);
-
 	if (status & HCLGE_ROCEE_AXI_ERR_INT_MASK) {
 		if (status & HCLGE_ROCEE_RERR_INT_MASK)
 			dev_err(dev, "ROCEE RAS AXI rresp error\n");
@@ -1647,7 +1641,6 @@ pci_ers_result_t hclge_handle_hw_ras_error(struct hnae3_ae_dev *ae_dev)
 	}
 
 	status = hclge_read_dev(&hdev->hw, HCLGE_RAS_PF_OTHER_INT_STS_REG);
-
 	if (status & HCLGE_RAS_REG_NFE_MASK ||
 	    status & HCLGE_RAS_REG_ROCEE_ERR_MASK)
 		ae_dev->hw_err_reset_req = 0;

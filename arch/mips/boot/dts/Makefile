@@ -15,6 +15,7 @@ subdir-$(CONFIG_MACH_PIC32)		+= pic32
 subdir-$(CONFIG_ATH79)			+= qca
 subdir-$(CONFIG_RALINK)			+= ralink
 subdir-$(CONFIG_MACH_RTL8186)		+= realtek
+subdir-$(CONFIG_MACH_REALTEK_RTL)	+= realtek
 subdir-$(CONFIG_FIT_IMAGE_FDT_XILFPGA)	+= xilfpga
 
 obj-$(CONFIG_BUILTIN_DTB)	:= $(addsuffix /, $(subdir-y))

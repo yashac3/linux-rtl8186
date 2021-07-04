@@ -120,7 +120,7 @@ struct mt7603_dev {
 	unsigned long last_cca_adj;
 
 	u32 ampdu_ref;
-	__le32 rx_ampdu_ts;
+	u32 rx_ampdu_ts;
 	u8 rssi_offset[3];
 
 	u8 slottime;
@@ -131,8 +131,6 @@ struct mt7603_dev {
 	ktime_t ed_time;
 
 	spinlock_t ps_lock;
-
-	u8 mac_work_count;
 
 	u8 mcu_running;
 

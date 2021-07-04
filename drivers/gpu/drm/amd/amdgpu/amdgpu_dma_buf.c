@@ -40,6 +40,7 @@
 #include <linux/dma-buf.h>
 #include <linux/dma-fence-array.h>
 #include <linux/pci-p2pdma.h>
+#include <linux/pm_runtime.h>
 
 /**
  * amdgpu_gem_prime_mmap - &drm_driver.gem_prime_mmap implementation
@@ -151,9 +152,13 @@ static int amdgpu_dma_buf_attach(struct dma_buf *dmabuf,
 	if (attach->dev->driver == adev->dev->driver)
 		return 0;
 
+	r = pm_runtime_get_sync(adev_to_drm(adev)->dev);
+	if (r < 0)
+		goto out;
+
 	r = amdgpu_bo_reserve(bo, false);
 	if (unlikely(r != 0))
-		return r;
+		goto out;
 
 	/*
 	 * We only create shared fences for internal use, but importers
@@ -165,11 +170,15 @@ static int amdgpu_dma_buf_attach(struct dma_buf *dmabuf,
 	 */
 	r = __dma_resv_make_exclusive(bo->tbo.base.resv);
 	if (r)
-		return r;
+		goto out;
 
 	bo->prime_shared_count++;
 	amdgpu_bo_unreserve(bo);
 	return 0;
+
+out:
+	pm_runtime_put_autosuspend(adev_to_drm(adev)->dev);
+	return r;
 }
 
 /**
@@ -189,6 +198,9 @@ static void amdgpu_dma_buf_detach(struct dma_buf *dmabuf,
 
 	if (attach->dev->driver != adev->dev->driver && bo->prime_shared_count)
 		bo->prime_shared_count--;
+
+	pm_runtime_mark_last_busy(adev_to_drm(adev)->dev);
+	pm_runtime_put_autosuspend(adev_to_drm(adev)->dev);
 }
 
 /**
@@ -202,9 +214,21 @@ static int amdgpu_dma_buf_pin(struct dma_buf_attachment *attach)
 {
 	struct drm_gem_object *obj = attach->dmabuf->priv;
 	struct amdgpu_bo *bo = gem_to_amdgpu_bo(obj);
+	int r;
 
 	/* pin buffer into GTT */
-	return amdgpu_bo_pin(bo, AMDGPU_GEM_DOMAIN_GTT);
+	r = amdgpu_bo_pin(bo, AMDGPU_GEM_DOMAIN_GTT);
+	if (r)
+		return r;
+
+	if (bo->tbo.moving) {
+		r = dma_fence_wait(bo->tbo.moving, true);
+		if (r) {
+			amdgpu_bo_unpin(bo);
+			return r;
+		}
+	}
+	return 0;
 }
 
 /**
@@ -269,7 +293,7 @@ static struct sg_table *amdgpu_dma_buf_map(struct dma_buf_attachment *attach,
 	case TTM_PL_TT:
 		sgt = drm_prime_pages_to_sg(obj->dev,
 					    bo->tbo.ttm->pages,
-					    bo->tbo.num_pages);
+					    bo->tbo.ttm->num_pages);
 		if (IS_ERR(sgt))
 			return sgt;
 
@@ -279,8 +303,8 @@ static struct sg_table *amdgpu_dma_buf_map(struct dma_buf_attachment *attach,
 		break;
 
 	case TTM_PL_VRAM:
-		r = amdgpu_vram_mgr_alloc_sgt(adev, &bo->tbo.mem, attach->dev,
-					      dir, &sgt);
+		r = amdgpu_vram_mgr_alloc_sgt(adev, &bo->tbo.mem, 0,
+				bo->tbo.base.size, attach->dev, dir, &sgt);
 		if (r)
 			return ERR_PTR(r);
 		break;
@@ -309,17 +333,12 @@ static void amdgpu_dma_buf_unmap(struct dma_buf_attachment *attach,
 				 struct sg_table *sgt,
 				 enum dma_data_direction dir)
 {
-	struct dma_buf *dma_buf = attach->dmabuf;
-	struct drm_gem_object *obj = dma_buf->priv;
-	struct amdgpu_bo *bo = gem_to_amdgpu_bo(obj);
-	struct amdgpu_device *adev = amdgpu_ttm_adev(bo->tbo.bdev);
-
 	if (sgt->sgl->page_link) {
 		dma_unmap_sgtable(attach->dev, sgt, dir, 0);
 		sg_free_table(sgt);
 		kfree(sgt);
 	} else {
-		amdgpu_vram_mgr_free_sgt(adev, attach->dev, dir, sgt);
+		amdgpu_vram_mgr_free_sgt(attach->dev, dir, sgt);
 	}
 }
 
@@ -422,22 +441,22 @@ amdgpu_dma_buf_create_obj(struct drm_device *dev, struct dma_buf *dma_buf)
 {
 	struct dma_resv *resv = dma_buf->resv;
 	struct amdgpu_device *adev = drm_to_adev(dev);
-	struct amdgpu_bo *bo;
-	struct amdgpu_bo_param bp;
 	struct drm_gem_object *gobj;
+	struct amdgpu_bo *bo;
+	uint64_t flags = 0;
 	int ret;
 
-	memset(&bp, 0, sizeof(bp));
-	bp.size = dma_buf->size;
-	bp.byte_align = PAGE_SIZE;
-	bp.domain = AMDGPU_GEM_DOMAIN_CPU;
-	bp.flags = 0;
-	bp.type = ttm_bo_type_sg;
-	bp.resv = resv;
 	dma_resv_lock(resv, NULL);
+
+	if (dma_buf->ops == &amdgpu_dmabuf_ops) {
+		struct amdgpu_bo *other = gem_to_amdgpu_bo(dma_buf->priv);
+
+		flags |= other->flags & AMDGPU_GEM_CREATE_CPU_GTT_USWC;
+	}
+
 	ret = amdgpu_gem_object_create(adev, dma_buf->size, PAGE_SIZE,
-			AMDGPU_GEM_DOMAIN_CPU,
-			0, ttm_bo_type_sg, resv, &gobj);
+				       AMDGPU_GEM_DOMAIN_CPU, flags,
+				       ttm_bo_type_sg, resv, &gobj);
 	if (ret)
 		goto error;
 

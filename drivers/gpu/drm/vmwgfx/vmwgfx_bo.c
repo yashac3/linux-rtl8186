@@ -131,7 +131,6 @@ err:
  *
  * @dev_priv:  Driver private.
  * @buf:  DMA buffer to move.
- * @pin:  Pin buffer if true.
  * @interruptible:  Use interruptible wait.
  * Return: Zero on success, Negative error code on failure. In particular
  * -ERESTARTSYS if interrupted by a signal
@@ -223,7 +222,7 @@ int vmw_bo_pin_in_start_of_vram(struct vmw_private *dev_priv,
 	uint32_t new_flags;
 
 	place = vmw_vram_placement.placement[0];
-	place.lpfn = bo->num_pages;
+	place.lpfn = bo->mem.num_pages;
 	placement.num_placement = 1;
 	placement.placement = &place;
 	placement.num_busy_placement = 1;
@@ -244,7 +243,7 @@ int vmw_bo_pin_in_start_of_vram(struct vmw_private *dev_priv,
 	 * that situation.
 	 */
 	if (bo->mem.mem_type == TTM_PL_VRAM &&
-	    bo->mem.start < bo->num_pages &&
+	    bo->mem.start < bo->mem.num_pages &&
 	    bo->mem.start > 0 &&
 	    buf->base.pin_count == 0) {
 		ctx.interruptible = false;
@@ -391,7 +390,7 @@ void *vmw_bo_map_and_cache(struct vmw_buffer_object *vbo)
 	if (virtual)
 		return virtual;
 
-	ret = ttm_bo_kmap(bo, 0, bo->num_pages, &vbo->map);
+	ret = ttm_bo_kmap(bo, 0, bo->mem.num_pages, &vbo->map);
 	if (ret)
 		DRM_ERROR("Buffer object map failed: %d.\n", ret);
 
@@ -508,17 +507,25 @@ int vmw_bo_create_kernel(struct vmw_private *dev_priv, unsigned long size,
 	acc_size = ttm_round_pot(sizeof(*bo));
 	acc_size += ttm_round_pot(npages * sizeof(void *));
 	acc_size += ttm_round_pot(sizeof(struct ttm_tt));
-	ret = ttm_bo_init_reserved(&dev_priv->bdev, bo, size,
-				   ttm_bo_type_device, placement, 0,
-				   &ctx, acc_size, NULL, NULL, NULL);
+
+	ret = ttm_mem_global_alloc(&ttm_mem_glob, acc_size, &ctx);
 	if (unlikely(ret))
 		goto error_free;
+
+	ret = ttm_bo_init_reserved(&dev_priv->bdev, bo, size,
+				   ttm_bo_type_device, placement, 0,
+				   &ctx, NULL, NULL, NULL);
+	if (unlikely(ret))
+		goto error_account;
 
 	ttm_bo_pin(bo);
 	ttm_bo_unreserve(bo);
 	*p_bo = bo;
 
 	return 0;
+
+error_account:
+	ttm_mem_global_free(&ttm_mem_glob, acc_size);
 
 error_free:
 	kfree(bo);
@@ -546,7 +553,7 @@ int vmw_bo_init(struct vmw_private *dev_priv,
 		void (*bo_free)(struct ttm_buffer_object *bo))
 {
 	struct ttm_operation_ctx ctx = { interruptible, false };
-	struct ttm_bo_device *bdev = &dev_priv->bdev;
+	struct ttm_device *bdev = &dev_priv->bdev;
 	size_t acc_size;
 	int ret;
 	bool user = (bo_free == &vmw_user_bo_destroy);
@@ -559,11 +566,17 @@ int vmw_bo_init(struct vmw_private *dev_priv,
 	vmw_bo->base.priority = 3;
 	vmw_bo->res_tree = RB_ROOT;
 
-	ret = ttm_bo_init_reserved(bdev, &vmw_bo->base, size,
-				   ttm_bo_type_device, placement,
-				   0, &ctx, acc_size, NULL, NULL, bo_free);
+	ret = ttm_mem_global_alloc(&ttm_mem_glob, acc_size, &ctx);
 	if (unlikely(ret))
 		return ret;
+
+	ret = ttm_bo_init_reserved(bdev, &vmw_bo->base, size,
+				   ttm_bo_type_device, placement,
+				   0, &ctx, NULL, NULL, bo_free);
+	if (unlikely(ret)) {
+		ttm_mem_global_free(&ttm_mem_glob, acc_size);
+		return ret;
+	}
 
 	if (pin)
 		ttm_bo_pin(&vmw_bo->base);
@@ -635,6 +648,7 @@ static void vmw_user_bo_ref_obj_release(struct ttm_base_object *base,
  * @handle: Pointer to where the handle value should be assigned.
  * @p_vbo: Pointer to where the refcounted struct vmw_buffer_object pointer
  * should be assigned.
+ * @p_base: The TTM base object pointer about to be allocated.
  * Return: Zero on success, negative error code on error.
  */
 int vmw_user_bo_alloc(struct vmw_private *dev_priv,
@@ -1058,7 +1072,7 @@ int vmw_user_bo_reference(struct ttm_object_file *tfile,
 void vmw_bo_fence_single(struct ttm_buffer_object *bo,
 			 struct vmw_fence_obj *fence)
 {
-	struct ttm_bo_device *bdev = bo->bdev;
+	struct ttm_device *bdev = bo->bdev;
 
 	struct vmw_private *dev_priv =
 		container_of(bdev, struct vmw_private, bdev);

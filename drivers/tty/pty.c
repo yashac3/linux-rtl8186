@@ -29,6 +29,7 @@
 #include <linux/file.h>
 #include <linux/ioctl.h>
 #include <linux/compat.h>
+#include "tty.h"
 
 #undef TTY_DEBUG_HANGUP
 #ifdef TTY_DEBUG_HANGUP
@@ -45,7 +46,6 @@ static DEFINE_MUTEX(devpts_mutex);
 
 static void pty_close(struct tty_struct *tty, struct file *filp)
 {
-	BUG_ON(!tty);
 	if (tty->driver->subtype == PTY_TYPE_MASTER)
 		WARN_ON(tty->count > 1);
 	else {
@@ -160,6 +160,7 @@ static int pty_chars_in_buffer(struct tty_struct *tty)
 static int pty_set_lock(struct tty_struct *tty, int __user *arg)
 {
 	int val;
+
 	if (get_user(val, arg))
 		return -EFAULT;
 	if (val)
@@ -172,6 +173,7 @@ static int pty_set_lock(struct tty_struct *tty, int __user *arg)
 static int pty_get_lock(struct tty_struct *tty, int __user *arg)
 {
 	int locked = test_bit(TTY_PTY_LOCK, &tty->flags);
+
 	return put_user(locked, arg);
 }
 
@@ -201,6 +203,7 @@ static int pty_set_pktmode(struct tty_struct *tty, int __user *arg)
 static int pty_get_pktmode(struct tty_struct *tty, int __user *arg)
 {
 	int pktmode = tty->packet;
+
 	return put_user(pktmode, arg);
 }
 
@@ -464,6 +467,7 @@ static int pty_install(struct tty_driver *driver, struct tty_struct *tty)
 static void pty_remove(struct tty_driver *driver, struct tty_struct *tty)
 {
 	struct tty_struct *pair = tty->link;
+
 	driver->ttys[tty->index] = NULL;
 	if (pair)
 		pair->driver->ttys[pair->index] = NULL;

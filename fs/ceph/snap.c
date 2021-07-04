@@ -605,7 +605,7 @@ int __ceph_finish_cap_snap(struct ceph_inode_info *ci,
 	struct ceph_mds_client *mdsc = ceph_sb_to_mdsc(inode->i_sb);
 
 	BUG_ON(capsnap->writing);
-	capsnap->size = inode->i_size;
+	capsnap->size = i_size_read(inode);
 	capsnap->mtime = inode->i_mtime;
 	capsnap->atime = inode->i_atime;
 	capsnap->ctime = inode->i_ctime;
@@ -620,6 +620,16 @@ int __ceph_finish_cap_snap(struct ceph_inode_info *ci,
 		     capsnap->context, capsnap->context->seq,
 		     ceph_cap_string(capsnap->dirty), capsnap->size,
 		     capsnap->dirty_pages);
+		return 0;
+	}
+
+	/* Fb cap still in use, delay it */
+	if (ci->i_wb_ref) {
+		dout("finish_cap_snap %p cap_snap %p snapc %p %llu %s s=%llu "
+		     "used WRBUFFER, delaying\n", inode, capsnap,
+		     capsnap->context, capsnap->context->seq,
+		     ceph_cap_string(capsnap->dirty), capsnap->size);
+		capsnap->writing = 1;
 		return 0;
 	}
 

@@ -472,7 +472,7 @@ static struct pmbus_driver_info ibm_cffps_info[] = {
 };
 
 static struct pmbus_platform_data ibm_cffps_pdata = {
-	.flags = PMBUS_SKIP_STATUS_CHECK,
+	.flags = PMBUS_SKIP_STATUS_CHECK | PMBUS_NO_CAPABILITY,
 };
 
 static int ibm_cffps_probe(struct i2c_client *client)
@@ -625,3 +625,4 @@ module_i2c_driver(ibm_cffps_driver);
 MODULE_AUTHOR("Eddie James");
 MODULE_DESCRIPTION("PMBus driver for IBM Common Form Factor power supplies");
 MODULE_LICENSE("GPL");
+MODULE_IMPORT_NS(PMBUS);

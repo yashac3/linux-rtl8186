@@ -13,9 +13,11 @@
 #include <linux/bitfield.h>
 #include <linux/iopoll.h>
 #include <linux/interrupt.h>
+#include <linux/workqueue.h>
 
 #include "util.h"
 
+#define RTW_NAPI_WEIGHT_NUM		64
 #define RTW_MAX_MAC_ID_NUM		32
 #define RTW_MAX_SEC_CAM_NUM		32
 #define MAX_PG_CAM_BACKUP_NUM		8
@@ -623,6 +625,7 @@ struct rtw_rx_pkt_stat {
 
 	struct rtw_sta_info *si;
 	struct ieee80211_vif *vif;
+	struct ieee80211_hdr *hdr;
 };
 
 DECLARE_EWMA(tp, 10, 2);
@@ -803,6 +806,7 @@ struct rtw_regulatory {
 
 struct rtw_chip_ops {
 	int (*mac_init)(struct rtw_dev *rtwdev);
+	void (*dump_fw_crash)(struct rtw_dev *rtwdev);
 	void (*shutdown)(struct rtw_dev *rtwdev);
 	int (*read_efuse)(struct rtw_dev *rtwdev, u8 *map);
 	void (*phy_set_param)(struct rtw_dev *rtwdev);
@@ -835,6 +839,8 @@ struct rtw_chip_ops {
 			      struct ieee80211_bss_conf *conf);
 	void (*cfg_csi_rate)(struct rtw_dev *rtwdev, u8 rssi, u8 cur_rate,
 			     u8 fixrate_en, u8 *new_rate);
+	void (*cfo_init)(struct rtw_dev *rtwdev);
+	void (*cfo_track)(struct rtw_dev *rtwdev);
 
 	/* for coex */
 	void (*coex_set_init)(struct rtw_dev *rtwdev);
@@ -1042,11 +1048,18 @@ enum rtw_rfe_fem {
 struct rtw_rfe_def {
 	const struct rtw_table *phy_pg_tbl;
 	const struct rtw_table *txpwr_lmt_tbl;
+	const struct rtw_table *agc_btg_tbl;
 };
 
 #define RTW_DEF_RFE(chip, bb_pg, pwrlmt) {				  \
 	.phy_pg_tbl = &rtw ## chip ## _bb_pg_type ## bb_pg ## _tbl,	  \
 	.txpwr_lmt_tbl = &rtw ## chip ## _txpwr_lmt_type ## pwrlmt ## _tbl, \
+	}
+
+#define RTW_DEF_RFE_EXT(chip, bb_pg, pwrlmt, btg) {			  \
+	.phy_pg_tbl = &rtw ## chip ## _bb_pg_type ## bb_pg ## _tbl,	  \
+	.txpwr_lmt_tbl = &rtw ## chip ## _txpwr_lmt_type ## pwrlmt ## _tbl, \
+	.agc_btg_tbl = &rtw ## chip ## _agc_btg_type ## btg ## _tbl, \
 	}
 
 #define RTW_PWR_TRK_5G_1		0
@@ -1157,6 +1170,7 @@ struct rtw_chip_info {
 	bool en_dis_dpd;
 	u16 dpd_ratemask;
 	u8 iqk_threshold;
+	u8 lck_threshold;
 	const struct rtw_pwr_track_tbl *pwr_track_tbl;
 
 	u8 bfer_su_max_num;
@@ -1488,6 +1502,46 @@ struct rtw_iqk_info {
 	} result;
 };
 
+enum rtw_rf_band {
+	RF_BAND_2G_CCK,
+	RF_BAND_2G_OFDM,
+	RF_BAND_5G_L,
+	RF_BAND_5G_M,
+	RF_BAND_5G_H,
+	RF_BAND_MAX
+};
+
+#define RF_GAIN_NUM 11
+#define RF_HW_OFFSET_NUM 10
+
+struct rtw_gapk_info {
+	u32 rf3f_bp[RF_BAND_MAX][RF_GAIN_NUM][RTW_RF_PATH_MAX];
+	u32 rf3f_fs[RTW_RF_PATH_MAX][RF_GAIN_NUM];
+	bool txgapk_bp_done;
+	s8 offset[RF_GAIN_NUM][RTW_RF_PATH_MAX];
+	s8 fianl_offset[RF_GAIN_NUM][RTW_RF_PATH_MAX];
+	u8 read_txgain;
+	u8 channel;
+};
+
+struct rtw_cfo_track {
+	bool is_adjust;
+	u8 crystal_cap;
+	s32 cfo_tail[RTW_RF_PATH_MAX];
+	s32 cfo_cnt[RTW_RF_PATH_MAX];
+	u32 packet_count;
+	u32 packet_count_pre;
+};
+
+#define RRSR_INIT_2G 0x15f
+#define RRSR_INIT_5G 0x150
+
+enum rtw_dm_cap {
+	RTW_DM_CAP_NA,
+	RTW_DM_CAP_TXGAPK,
+	RTW_DM_CAP_NUM
+};
+
 struct rtw_dm_info {
 	u32 cck_fa_cnt;
 	u32 ofdm_fa_cnt;
@@ -1518,8 +1572,11 @@ struct rtw_dm_info {
 	u8 cck_gi_l_bnd;
 
 	u8 tx_rate;
+	u32 rrsr_val_init;
+	u32 rrsr_mask_min;
 	u8 thermal_avg[RTW_RF_PATH_MAX];
 	u8 thermal_meter_k;
+	u8 thermal_meter_lck;
 	s8 delta_power_index[RTW_RF_PATH_MAX];
 	s8 delta_power_index_last[RTW_RF_PATH_MAX];
 	u8 default_ofdm_index;
@@ -1535,6 +1592,7 @@ struct rtw_dm_info {
 	u8 dack_dck[RTW_RF_PATH_MAX][2][DACK_DCK_BACKUP_NUM];
 
 	struct rtw_dpk_info dpk_info;
+	struct rtw_cfo_track cfo_track;
 
 	/* [bandwidth 0:20M/1:40M][number of path] */
 	u8 cck_pd_lv[2][RTW_RF_PATH_MAX];
@@ -1552,7 +1610,10 @@ struct rtw_dm_info {
 	struct ewma_evm ewma_evm[RTW_EVM_NUM];
 	struct ewma_snr ewma_snr[RTW_SNR_NUM];
 
+	u32 dm_flags; /* enum rtw_dm_cap */
 	struct rtw_iqk_info iqk;
+	struct rtw_gapk_info gapk;
+	bool is_bt_iqk_timeout;
 };
 
 struct rtw_efuse {
@@ -1759,7 +1820,8 @@ struct rtw_dev {
 	/* used to protect txqs list */
 	spinlock_t txq_lock;
 	struct list_head txqs;
-	struct tasklet_struct tx_tasklet;
+	struct workqueue_struct *tx_wq;
+	struct work_struct tx_work;
 	struct work_struct ba_work;
 
 	struct rtw_tx_report tx_report;
@@ -1861,6 +1923,12 @@ static inline void rtw_release_macid(struct rtw_dev *rtwdev, u8 mac_id)
 	clear_bit(mac_id, rtwdev->mac_id_map);
 }
 
+static inline void rtw_chip_dump_fw_crash(struct rtw_dev *rtwdev)
+{
+	if (rtwdev->chip->ops->dump_fw_crash)
+		rtwdev->chip->ops->dump_fw_crash(rtwdev);
+}
+
 void rtw_get_channel_params(struct cfg80211_chan_def *chandef,
 			    struct rtw_channel_params *ch_param);
 bool check_hw_ready(struct rtw_dev *rtwdev, u32 addr, u32 mask, u32 target);
@@ -1890,5 +1958,9 @@ int rtw_sta_add(struct rtw_dev *rtwdev, struct ieee80211_sta *sta,
 void rtw_sta_remove(struct rtw_dev *rtwdev, struct ieee80211_sta *sta,
 		    bool fw_exist);
 void rtw_fw_recovery(struct rtw_dev *rtwdev);
+int rtw_dump_fw(struct rtw_dev *rtwdev, const u32 ocp_src, u32 size,
+		const char *prefix_str);
+int rtw_dump_reg(struct rtw_dev *rtwdev, const u32 addr, const u32 size,
+		 const char *prefix_str);
 
 #endif

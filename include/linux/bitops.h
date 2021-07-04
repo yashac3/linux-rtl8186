@@ -214,7 +214,7 @@ static inline int get_count_order_long(unsigned long l)
  * __ffs64 - find first set bit in a 64 bit word
  * @word: The 64 bit word
  *
- * On 64 bit arches this is a synomyn for __ffs
+ * On 64 bit arches this is a synonym for __ffs
  * The result is not defined if no bits are set, so check that @word
  * is non-zero before calling this.
  */
@@ -284,18 +284,6 @@ static __always_inline void __assign_bit(long nr, volatile unsigned long *addr,
 								\
 	!(old__ & test__);					\
 })
-#endif
-
-#ifndef find_last_bit
-/**
- * find_last_bit - find the last set bit in a memory region
- * @addr: The address to start the search at
- * @size: The number of bits to search
- *
- * Returns the bit number of the last set bit, or size.
- */
-extern unsigned long find_last_bit(const unsigned long *addr,
-				   unsigned long size);
 #endif
 
 #endif /* __KERNEL__ */

@@ -98,8 +98,7 @@ static int amdgpu_cs_bo_handles_chunk(struct amdgpu_cs_parser *p,
 	return 0;
 
 error_free:
-	if (info)
-		kvfree(info);
+	kvfree(info);
 
 	return r;
 }
@@ -118,7 +117,7 @@ static int amdgpu_cs_parser_init(struct amdgpu_cs_parser *p, union drm_amdgpu_cs
 	if (cs->in.num_chunks == 0)
 		return 0;
 
-	chunk_array = kmalloc_array(cs->in.num_chunks, sizeof(uint64_t), GFP_KERNEL);
+	chunk_array = kvmalloc_array(cs->in.num_chunks, sizeof(uint64_t), GFP_KERNEL);
 	if (!chunk_array)
 		return -ENOMEM;
 
@@ -145,7 +144,7 @@ static int amdgpu_cs_parser_init(struct amdgpu_cs_parser *p, union drm_amdgpu_cs
 	}
 
 	p->nchunks = cs->in.num_chunks;
-	p->chunks = kmalloc_array(p->nchunks, sizeof(struct amdgpu_cs_chunk),
+	p->chunks = kvmalloc_array(p->nchunks, sizeof(struct amdgpu_cs_chunk),
 			    GFP_KERNEL);
 	if (!p->chunks) {
 		ret = -ENOMEM;
@@ -239,7 +238,7 @@ static int amdgpu_cs_parser_init(struct amdgpu_cs_parser *p, union drm_amdgpu_cs
 
 	if (p->uf_entry.tv.bo)
 		p->job->uf_addr = uf_offset;
-	kfree(chunk_array);
+	kvfree(chunk_array);
 
 	/* Use this opportunity to fill in task info for the vm */
 	amdgpu_vm_set_task_info(vm);
@@ -251,11 +250,11 @@ free_all_kdata:
 free_partial_kdata:
 	for (; i >= 0; i--)
 		kvfree(p->chunks[i].kdata);
-	kfree(p->chunks);
+	kvfree(p->chunks);
 	p->chunks = NULL;
 	p->nchunks = 0;
 free_chunk:
-	kfree(chunk_array);
+	kvfree(chunk_array);
 
 	return ret;
 }
@@ -560,7 +559,7 @@ static int amdgpu_cs_parser_bos(struct amdgpu_cs_parser *p,
 					sizeof(struct page *),
 					GFP_KERNEL | __GFP_ZERO);
 		if (!e->user_pages) {
-			DRM_ERROR("calloc failure\n");
+			DRM_ERROR("kvmalloc_array failure\n");
 			return -ENOMEM;
 		}
 
@@ -707,7 +706,7 @@ static void amdgpu_cs_parser_fini(struct amdgpu_cs_parser *parser, int error,
 
 	for (i = 0; i < parser->nchunks; i++)
 		kvfree(parser->chunks[i].kdata);
-	kfree(parser->chunks);
+	kvfree(parser->chunks);
 	if (parser->job)
 		amdgpu_job_free(parser->job);
 	if (parser->uf_entry.tv.bo) {

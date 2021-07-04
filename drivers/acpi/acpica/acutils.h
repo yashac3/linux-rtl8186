@@ -3,7 +3,7 @@
  *
  * Name: acutils.h -- prototypes for the common (subsystem-wide) procedures
  *
- * Copyright (C) 2000 - 2020, Intel Corp.
+ * Copyright (C) 2000 - 2021, Intel Corp.
  *
  *****************************************************************************/
 
@@ -28,6 +28,7 @@ extern const char *acpi_gbl_max_decode[];
 extern const char *acpi_gbl_mem_decode[];
 extern const char *acpi_gbl_min_decode[];
 extern const char *acpi_gbl_mtp_decode[];
+extern const char *acpi_gbl_phy_decode[];
 extern const char *acpi_gbl_rng_decode[];
 extern const char *acpi_gbl_rw_decode[];
 extern const char *acpi_gbl_shr_decode[];

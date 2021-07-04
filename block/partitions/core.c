@@ -88,11 +88,9 @@ static int (*check_part[])(struct parsed_partitions *) = {
 
 static void bdev_set_nr_sectors(struct block_device *bdev, sector_t sectors)
 {
-	unsigned long flags;
-
-	spin_lock_irqsave(&bdev->bd_size_lock, flags);
+	spin_lock(&bdev->bd_size_lock);
 	i_size_write(bdev->bd_inode, (loff_t)sectors << SECTOR_SHIFT);
-	spin_unlock_irqrestore(&bdev->bd_size_lock, flags);
+	spin_unlock(&bdev->bd_size_lock);
 }
 
 static struct parsed_partitions *allocate_partitions(struct gendisk *hd)
@@ -197,7 +195,7 @@ static ssize_t part_start_show(struct device *dev,
 static ssize_t part_ro_show(struct device *dev,
 			    struct device_attribute *attr, char *buf)
 {
-	return sprintf(buf, "%d\n", dev_to_bdev(dev)->bd_read_only);
+	return sprintf(buf, "%d\n", bdev_read_only(dev_to_bdev(dev)));
 }
 
 static ssize_t part_alignment_offset_show(struct device *dev,
@@ -287,15 +285,12 @@ struct device_type part_type = {
  * Must be called either with bd_mutex held, before a disk can be opened or
  * after all disk users are gone.
  */
-void delete_partition(struct block_device *part)
+static void delete_partition(struct block_device *part)
 {
-	struct gendisk *disk = part->bd_disk;
-	struct disk_part_tbl *ptbl =
-		rcu_dereference_protected(disk->part_tbl, 1);
+	fsync_bdev(part);
+	__invalidate_device(part, true);
 
-	rcu_assign_pointer(ptbl->part[part->bd_partno], NULL);
-	rcu_assign_pointer(ptbl->last_lookup, NULL);
-
+	xa_erase(&part->bd_disk->part_tbl, part->bd_partno);
 	kobject_put(part->bd_holder_dir);
 	device_del(&part->bd_device);
 
@@ -327,9 +322,15 @@ static struct block_device *add_partition(struct gendisk *disk, int partno,
 	struct device *ddev = disk_to_dev(disk);
 	struct device *pdev;
 	struct block_device *bdev;
-	struct disk_part_tbl *ptbl;
 	const char *dname;
 	int err;
+
+	/*
+	 * disk_max_parts() won't be zero, either GENHD_FL_EXT_DEVT is set
+	 * or 'minors' is passed to alloc_disk().
+	 */
+	if (partno >= disk_max_parts(disk))
+		return ERR_PTR(-EINVAL);
 
 	/*
 	 * Partitions are not supported on zoned block devices that are used as
@@ -343,18 +344,13 @@ static struct block_device *add_partition(struct gendisk *disk, int partno,
 	case BLK_ZONED_HA:
 		pr_info("%s: disabling host aware zoned block device support due to partitions\n",
 			disk->disk_name);
-		disk->queue->limits.zoned = BLK_ZONED_NONE;
+		blk_queue_set_zoned(disk, BLK_ZONED_NONE);
 		break;
 	case BLK_ZONED_NONE:
 		break;
 	}
 
-	err = disk_expand_part_tbl(disk, partno);
-	if (err)
-		return ERR_PTR(err);
-	ptbl = rcu_dereference_protected(disk->part_tbl, 1);
-
-	if (ptbl->part[partno])
+	if (xa_load(&disk->part_tbl, partno))
 		return ERR_PTR(-EBUSY);
 
 	bdev = bdev_alloc(disk, partno);
@@ -363,7 +359,6 @@ static struct block_device *add_partition(struct gendisk *disk, int partno,
 
 	bdev->bd_start_sect = start;
 	bdev_set_nr_sectors(bdev, len);
-	bdev->bd_read_only = get_disk_ro(disk);
 
 	if (info) {
 		err = -ENOMEM;
@@ -408,8 +403,10 @@ static struct block_device *add_partition(struct gendisk *disk, int partno,
 	}
 
 	/* everything is up and running, commence */
+	err = xa_insert(&disk->part_tbl, partno, bdev, GFP_KERNEL);
+	if (err)
+		goto out_del;
 	bdev_add(bdev, devt);
-	rcu_assign_pointer(ptbl->part[partno], bdev);
 
 	/* suppress uevent if the disk suppresses it */
 	if (!dev_get_uevent_suppress(ddev))
@@ -430,21 +427,21 @@ out_put:
 static bool partition_overlaps(struct gendisk *disk, sector_t start,
 		sector_t length, int skip_partno)
 {
-	struct disk_part_iter piter;
 	struct block_device *part;
 	bool overlap = false;
+	unsigned long idx;
 
-	disk_part_iter_init(&piter, disk, DISK_PITER_INCL_EMPTY);
-	while ((part = disk_part_iter_next(&piter))) {
-		if (part->bd_partno == skip_partno ||
-		    start >= part->bd_start_sect + bdev_nr_sectors(part) ||
-		    start + length <= part->bd_start_sect)
-			continue;
-		overlap = true;
-		break;
+	rcu_read_lock();
+	xa_for_each_start(&disk->part_tbl, idx, part, 1) {
+		if (part->bd_partno != skip_partno &&
+		    start < part->bd_start_sect + bdev_nr_sectors(part) &&
+		    start + length > part->bd_start_sect) {
+			overlap = true;
+			break;
+		}
 	}
+	rcu_read_unlock();
 
-	disk_part_iter_exit(&piter);
 	return overlap;
 }
 
@@ -480,9 +477,6 @@ int bdev_del_partition(struct block_device *bdev, int partno)
 	ret = -EBUSY;
 	if (part->bd_openers)
 		goto out_unlock;
-
-	sync_blockdev(part);
-	invalidate_bdev(part);
 
 	delete_partition(part);
 	ret = 0;
@@ -539,28 +533,20 @@ static bool disk_unlock_native_capacity(struct gendisk *disk)
 	}
 }
 
-int blk_drop_partitions(struct block_device *bdev)
+void blk_drop_partitions(struct gendisk *disk)
 {
-	struct disk_part_iter piter;
 	struct block_device *part;
+	unsigned long idx;
 
-	if (bdev->bd_part_count)
-		return -EBUSY;
+	lockdep_assert_held(&disk->part0->bd_mutex);
 
-	sync_blockdev(bdev);
-	invalidate_bdev(bdev);
-
-	disk_part_iter_init(&piter, bdev->bd_disk, DISK_PITER_INCL_EMPTY);
-	while ((part = disk_part_iter_next(&piter)))
+	xa_for_each_start(&disk->part_tbl, idx, part, 1) {
+		if (!bdgrab(part))
+			continue;
 		delete_partition(part);
-	disk_part_iter_exit(&piter);
-
-	return 0;
+		bdput(part);
+	}
 }
-#ifdef CONFIG_S390
-/* for historic reasons in the DASD driver */
-EXPORT_SYMBOL_GPL(blk_drop_partitions);
-#endif
 
 static bool blk_add_partition(struct gendisk *disk, struct block_device *bdev,
 		struct parsed_partitions *state, int p)
@@ -615,7 +601,7 @@ static bool blk_add_partition(struct gendisk *disk, struct block_device *bdev,
 int blk_add_partitions(struct gendisk *disk, struct block_device *bdev)
 {
 	struct parsed_partitions *state;
-	int ret = -EAGAIN, p, highest;
+	int ret = -EAGAIN, p;
 
 	if (!disk_part_scan_enabled(disk))
 		return 0;
@@ -662,15 +648,6 @@ int blk_add_partitions(struct gendisk *disk, struct block_device *bdev)
 
 	/* tell userspace that the media / partition table may have changed */
 	kobject_uevent(&disk_to_dev(disk)->kobj, KOBJ_CHANGE);
-
-	/*
-	 * Detect the highest partition number and preallocate disk->part_tbl.
-	 * This is an optimization and not strictly necessary.
-	 */
-	for (p = 1, highest = 0; p < state->limit; p++)
-		if (state->parts[p].size)
-			highest = p;
-	disk_expand_part_tbl(disk, highest);
 
 	for (p = 1; p < state->limit; p++)
 		if (!blk_add_partition(disk, bdev, state, p))

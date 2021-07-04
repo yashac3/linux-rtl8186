@@ -17,6 +17,11 @@ struct cgroup;
 struct perf_counts;
 struct perf_stat_evsel;
 union perf_event;
+struct bpf_counter_ops;
+struct target;
+struct hashmap;
+struct bperf_leader_bpf;
+struct bperf_follower_bpf;
 
 typedef int (evsel__sb_cb_t)(union perf_event *event, void *data);
 
@@ -77,8 +82,11 @@ struct evsel {
 		bool			auto_merge_stats;
 		bool			collect_stat;
 		bool			weak_group;
+		bool			bpf_counter;
+		bool			use_config_name;
 		int			bpf_fd;
 		struct bpf_object	*bpf_obj;
+		struct list_head	config_terms;
 	};
 
 	/*
@@ -110,9 +118,8 @@ struct evsel {
 	bool			merged_stat;
 	bool			reset_group;
 	bool			errored;
-	unsigned long		*per_pkg_mask;
+	struct hashmap		*per_pkg_mask;
 	struct evsel		*leader;
-	struct list_head	config_terms;
 	int			err;
 	int			cpu_iter;
 	struct {
@@ -127,6 +134,24 @@ struct evsel {
 	 * See also evsel__has_callchain().
 	 */
 	__u64			synth_sample_type;
+
+	/*
+	 * bpf_counter_ops serves two use cases:
+	 *   1. perf-stat -b          counting events used byBPF programs
+	 *   2. perf-stat --use-bpf   use BPF programs to aggregate counts
+	 */
+	struct bpf_counter_ops	*bpf_counter_ops;
+
+	/* for perf-stat -b */
+	struct list_head	bpf_counter_list;
+
+	/* for perf-stat --use-bpf */
+	int			bperf_leader_prog_fd;
+	int			bperf_leader_link_fd;
+	union {
+		struct bperf_leader_bpf *leader_skel;
+		struct bperf_follower_bpf *follower_skel;
+	};
 };
 
 struct perf_missing_features {
@@ -145,12 +170,13 @@ struct perf_missing_features {
 	bool branch_hw_idx;
 	bool cgroup;
 	bool data_page_size;
+	bool code_page_size;
+	bool weight_struct;
 };
 
 extern struct perf_missing_features perf_missing_features;
 
 struct perf_cpu_map;
-struct target;
 struct thread_map;
 struct record_opts;
 
@@ -195,7 +221,7 @@ static inline struct evsel *evsel__newtp(const char *sys, const char *name)
 	return evsel__newtp_idx(sys, name, 0);
 }
 
-struct evsel *evsel__new_cycles(bool precise);
+struct evsel *evsel__new_cycles(bool precise, __u32 type, __u64 config);
 
 struct tep_event *event_format__new(const char *sys, const char *name);
 
@@ -215,6 +241,11 @@ void evsel__calc_id_pos(struct evsel *evsel);
 
 bool evsel__is_cache_op_valid(u8 type, u8 op);
 
+static inline bool evsel__is_bpf(struct evsel *evsel)
+{
+	return evsel->bpf_counter_ops != NULL;
+}
+
 #define EVSEL__MAX_ALIASES 8
 
 extern const char *evsel__hw_cache[PERF_COUNT_HW_CACHE_MAX][EVSEL__MAX_ALIASES];
@@ -222,6 +253,9 @@ extern const char *evsel__hw_cache_op[PERF_COUNT_HW_CACHE_OP_MAX][EVSEL__MAX_ALI
 extern const char *evsel__hw_cache_result[PERF_COUNT_HW_CACHE_RESULT_MAX][EVSEL__MAX_ALIASES];
 extern const char *evsel__hw_names[PERF_COUNT_HW_MAX];
 extern const char *evsel__sw_names[PERF_COUNT_SW_MAX];
+extern char *evsel__bpf_counter_events;
+bool evsel__match_bpf_counter_events(const char *name);
+
 int __evsel__hw_cache_type_op_res_name(u8 type, u8 op, u8 result, char *bf, size_t size);
 const char *evsel__name(struct evsel *evsel);
 
@@ -238,6 +272,8 @@ void __evsel__reset_sample_bit(struct evsel *evsel, enum perf_event_sample_forma
 	__evsel__reset_sample_bit(evsel, PERF_SAMPLE_##bit)
 
 void evsel__set_sample_id(struct evsel *evsel, bool use_sample_identifier);
+
+void arch_evsel__set_sample_weight(struct evsel *evsel);
 
 int evsel__set_filter(struct evsel *evsel, const char *filter);
 int evsel__append_tp_filter(struct evsel *evsel, const char *filter);
@@ -424,4 +460,7 @@ static inline bool evsel__is_dummy_event(struct evsel *evsel)
 struct perf_env *evsel__env(struct evsel *evsel);
 
 int evsel__store_ids(struct evsel *evsel, struct evlist *evlist);
+
+void evsel__zero_per_pkg(struct evsel *evsel);
+bool evsel__is_hybrid(struct evsel *evsel);
 #endif /* __PERF_EVSEL_H */

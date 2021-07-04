@@ -956,8 +956,7 @@ static int netsec_process_rx(struct netsec_priv *priv, int budget)
 	u32 xdp_act = 0;
 	int done = 0;
 
-	xdp.rxq = &dring->xdp_rxq;
-	xdp.frame_sz = PAGE_SIZE;
+	xdp_init_buff(&xdp, PAGE_SIZE, &dring->xdp_rxq);
 
 	rcu_read_lock();
 	xdp_prog = READ_ONCE(priv->xdp_prog);
@@ -1016,10 +1015,8 @@ static int netsec_process_rx(struct netsec_priv *priv, int budget)
 					dma_dir);
 		prefetch(desc->addr);
 
-		xdp.data_hard_start = desc->addr;
-		xdp.data = desc->addr + NETSEC_RXBUF_HEADROOM;
-		xdp_set_data_meta_invalid(&xdp);
-		xdp.data_end = xdp.data + pkt_len;
+		xdp_prepare_buff(&xdp, desc->addr, NETSEC_RXBUF_HEADROOM,
+				 pkt_len, false);
 
 		if (xdp_prog) {
 			xdp_result = netsec_run_xdp(priv, xdp_prog, &xdp);
@@ -1718,13 +1715,16 @@ static int netsec_netdev_init(struct net_device *ndev)
 		goto err1;
 
 	/* set phy power down */
-	data = netsec_phy_read(priv->mii_bus, priv->phy_addr, MII_BMCR) |
-		BMCR_PDOWN;
-	netsec_phy_write(priv->mii_bus, priv->phy_addr, MII_BMCR, data);
+	data = netsec_phy_read(priv->mii_bus, priv->phy_addr, MII_BMCR);
+	netsec_phy_write(priv->mii_bus, priv->phy_addr, MII_BMCR,
+			 data | BMCR_PDOWN);
 
 	ret = netsec_reset_hardware(priv, true);
 	if (ret)
 		goto err2;
+
+	/* Restore phy power state */
+	netsec_phy_write(priv->mii_bus, priv->phy_addr, MII_BMCR, data);
 
 	spin_lock_init(&priv->desc_ring[NETSEC_RING_TX].lock);
 	spin_lock_init(&priv->desc_ring[NETSEC_RING_RX].lock);
@@ -1760,8 +1760,7 @@ static int netsec_xdp_xmit(struct net_device *ndev, int n,
 {
 	struct netsec_priv *priv = netdev_priv(ndev);
 	struct netsec_desc_ring *tx_ring = &priv->desc_ring[NETSEC_RING_TX];
-	int drops = 0;
-	int i;
+	int i, nxmit = 0;
 
 	if (unlikely(flags & ~XDP_XMIT_FLAGS_MASK))
 		return -EINVAL;
@@ -1772,12 +1771,11 @@ static int netsec_xdp_xmit(struct net_device *ndev, int n,
 		int err;
 
 		err = netsec_xdp_queue_one(priv, xdpf, true);
-		if (err != NETSEC_XDP_TX) {
-			xdp_return_frame_rx_napi(xdpf);
-			drops++;
-		} else {
-			tx_ring->xdp_xmit++;
-		}
+		if (err != NETSEC_XDP_TX)
+			break;
+
+		tx_ring->xdp_xmit++;
+		nxmit++;
 	}
 	spin_unlock(&tx_ring->lock);
 
@@ -1786,7 +1784,7 @@ static int netsec_xdp_xmit(struct net_device *ndev, int n,
 		tx_ring->xdp_xmit = 0;
 	}
 
-	return n - drops;
+	return nxmit;
 }
 
 static int netsec_xdp_setup(struct netsec_priv *priv, struct bpf_prog *prog,

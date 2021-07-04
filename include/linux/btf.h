@@ -9,6 +9,7 @@
 #include <uapi/linux/bpf.h>
 
 #define BTF_TYPE_EMIT(type) ((void)(type *)0)
+#define BTF_TYPE_EMIT_ENUM(enum_val) ((void)enum_val)
 
 struct btf;
 struct btf_member;
@@ -91,6 +92,9 @@ int btf_type_snprintf_show(const struct btf *btf, u32 type_id, void *obj,
 int btf_get_fd_by_id(u32 id);
 u32 btf_obj_id(const struct btf *btf);
 bool btf_is_kernel(const struct btf *btf);
+bool btf_is_module(const struct btf *btf);
+struct module *btf_try_get_module(const struct btf *btf);
+u32 btf_nr_types(const struct btf *btf);
 bool btf_member_is_reg_int(const struct btf *btf, const struct btf_type *s,
 			   const struct btf_member *m,
 			   u32 expected_offset, u32 expected_size);
@@ -106,6 +110,7 @@ const struct btf_type *btf_type_resolve_func_ptr(const struct btf *btf,
 const struct btf_type *
 btf_resolve_size(const struct btf *btf, const struct btf_type *type,
 		 u32 *type_size);
+const char *btf_type_str(const struct btf_type *t);
 
 #define for_each_member(i, struct_type, member)			\
 	for (i = 0, member = btf_type_member(struct_type);	\
@@ -135,6 +140,11 @@ static inline bool btf_type_is_small_int(const struct btf_type *t)
 static inline bool btf_type_is_enum(const struct btf_type *t)
 {
 	return BTF_INFO_KIND(t->info) == BTF_KIND_ENUM;
+}
+
+static inline bool btf_type_is_scalar(const struct btf_type *t)
+{
+	return btf_type_is_int(t) || btf_type_is_enum(t);
 }
 
 static inline bool btf_type_is_typedef(const struct btf_type *t)

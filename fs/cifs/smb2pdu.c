@@ -814,8 +814,9 @@ SMB2_negotiate(const unsigned int xid, struct cifs_ses *ses)
 		   SMB3ANY_VERSION_STRING) == 0) {
 		req->Dialects[0] = cpu_to_le16(SMB30_PROT_ID);
 		req->Dialects[1] = cpu_to_le16(SMB302_PROT_ID);
-		req->DialectCount = cpu_to_le16(2);
-		total_len += 4;
+		req->Dialects[2] = cpu_to_le16(SMB311_PROT_ID);
+		req->DialectCount = cpu_to_le16(3);
+		total_len += 6;
 	} else if (strcmp(server->vals->version_string,
 		   SMBDEFAULT_VERSION_STRING) == 0) {
 		req->Dialects[0] = cpu_to_le16(SMB21_PROT_ID);
@@ -840,6 +841,8 @@ SMB2_negotiate(const unsigned int xid, struct cifs_ses *ses)
 		req->SecurityMode = 0;
 
 	req->Capabilities = cpu_to_le32(server->vals->req_capabilities);
+	if (ses->chan_max > 1)
+		req->Capabilities |= cpu_to_le32(SMB2_GLOBAL_CAP_MULTI_CHANNEL);
 
 	/* ClientGUID must be zero for SMB2.02 dialect */
 	if (server->vals->protocol_id == SMB20_PROT_ID)
@@ -848,6 +851,8 @@ SMB2_negotiate(const unsigned int xid, struct cifs_ses *ses)
 		memcpy(req->ClientGUID, server->client_guid,
 			SMB2_CLIENT_GUID_SIZE);
 		if ((server->vals->protocol_id == SMB311_PROT_ID) ||
+		    (strcmp(server->vals->version_string,
+		     SMB3ANY_VERSION_STRING) == 0) ||
 		    (strcmp(server->vals->version_string,
 		     SMBDEFAULT_VERSION_STRING) == 0))
 			assemble_neg_contexts(req, server, &total_len);
@@ -883,6 +888,10 @@ SMB2_negotiate(const unsigned int xid, struct cifs_ses *ses)
 			cifs_server_dbg(VFS,
 				"SMB2.1 dialect returned but not requested\n");
 			return -EIO;
+		} else if (rsp->DialectRevision == cpu_to_le16(SMB311_PROT_ID)) {
+			/* ops set to 3.0 by default for default so update */
+			server->ops = &smb311_operations;
+			server->vals = &smb311_values;
 		}
 	} else if (strcmp(server->vals->version_string,
 		   SMBDEFAULT_VERSION_STRING) == 0) {
@@ -948,6 +957,13 @@ SMB2_negotiate(const unsigned int xid, struct cifs_ses *ses)
 	server->capabilities = le32_to_cpu(rsp->Capabilities);
 	/* Internal types */
 	server->capabilities |= SMB2_NT_FIND | SMB2_LARGE_FILES;
+
+	/*
+	 * SMB3.0 supports only 1 cipher and doesn't have a encryption neg context
+	 * Set the cipher type manually.
+	 */
+	if (server->dialect == SMB30_PROT_ID && (server->capabilities & SMB2_GLOBAL_CAP_ENCRYPTION))
+		server->cipher_type = SMB2_ENCRYPTION_AES128_CCM;
 
 	security_blob = smb2_get_data_area_len(&blob_offset, &blob_length,
 					       (struct smb2_sync_hdr *)rsp);
@@ -1025,6 +1041,9 @@ int smb3_validate_negotiate(const unsigned int xid, struct cifs_tcon *tcon)
 
 	pneg_inbuf->Capabilities =
 			cpu_to_le32(server->vals->req_capabilities);
+	if (tcon->ses->chan_max > 1)
+		pneg_inbuf->Capabilities |= cpu_to_le32(SMB2_GLOBAL_CAP_MULTI_CHANNEL);
+
 	memcpy(pneg_inbuf->Guid, server->client_guid,
 					SMB2_CLIENT_GUID_SIZE);
 
@@ -1042,10 +1061,11 @@ int smb3_validate_negotiate(const unsigned int xid, struct cifs_tcon *tcon)
 		SMB3ANY_VERSION_STRING) == 0) {
 		pneg_inbuf->Dialects[0] = cpu_to_le16(SMB30_PROT_ID);
 		pneg_inbuf->Dialects[1] = cpu_to_le16(SMB302_PROT_ID);
-		pneg_inbuf->DialectCount = cpu_to_le16(2);
-		/* structure is big enough for 3 dialects, sending only 2 */
+		pneg_inbuf->Dialects[2] = cpu_to_le16(SMB311_PROT_ID);
+		pneg_inbuf->DialectCount = cpu_to_le16(3);
+		/* SMB 2.1 not included so subtract one dialect from len */
 		inbuflen = sizeof(*pneg_inbuf) -
-				(2 * sizeof(pneg_inbuf->Dialects[0]));
+				(sizeof(pneg_inbuf->Dialects[0]));
 	} else if (strcmp(server->vals->version_string,
 		SMBDEFAULT_VERSION_STRING) == 0) {
 		pneg_inbuf->Dialects[0] = cpu_to_le16(SMB21_PROT_ID);
@@ -1053,7 +1073,7 @@ int smb3_validate_negotiate(const unsigned int xid, struct cifs_tcon *tcon)
 		pneg_inbuf->Dialects[2] = cpu_to_le16(SMB302_PROT_ID);
 		pneg_inbuf->Dialects[3] = cpu_to_le16(SMB311_PROT_ID);
 		pneg_inbuf->DialectCount = cpu_to_le16(4);
-		/* structure is big enough for 3 dialects */
+		/* structure is big enough for 4 dialects */
 		inbuflen = sizeof(*pneg_inbuf);
 	} else {
 		/* otherwise specific dialect was requested */
@@ -1253,7 +1273,7 @@ SMB2_sess_sendreceive(struct SMB2_sess_data *sess_data)
 			    cifs_ses_server(sess_data->ses),
 			    &rqst,
 			    &sess_data->buf0_type,
-			    CIFS_LOG_ERROR | CIFS_NEG_OP, &rsp_iov);
+			    CIFS_LOG_ERROR | CIFS_SESS_OP, &rsp_iov);
 	cifs_small_buf_release(sess_data->iov[0].iov_base);
 	memcpy(&sess_data->iov[0], &rsp_iov, sizeof(struct kvec));
 
@@ -1849,7 +1869,7 @@ SMB2_tdis(const unsigned int xid, struct cifs_tcon *tcon)
 	if ((tcon->need_reconnect) || (tcon->ses->need_reconnect))
 		return 0;
 
-	close_shroot_lease(&tcon->crfid);
+	close_cached_dir_lease(&tcon->crfid);
 
 	rc = smb2_plain_req_init(SMB2_TREE_DISCONNECT, tcon, ses->server,
 				 (void **) &req,
@@ -3887,10 +3907,10 @@ smb2_new_read_req(void **buf, unsigned int *total_len,
 			 * Related requests use info from previous read request
 			 * in chain.
 			 */
-			shdr->SessionId = 0xFFFFFFFF;
+			shdr->SessionId = 0xFFFFFFFFFFFFFFFF;
 			shdr->TreeId = 0xFFFFFFFF;
-			req->PersistentFileId = 0xFFFFFFFF;
-			req->VolatileFileId = 0xFFFFFFFF;
+			req->PersistentFileId = 0xFFFFFFFFFFFFFFFF;
+			req->VolatileFileId = 0xFFFFFFFFFFFFFFFF;
 		}
 	}
 	if (remaining_bytes > io_parms->length)
@@ -4033,8 +4053,7 @@ smb2_async_readv(struct cifs_readdata *rdata)
 	if (rdata->credits.value > 0) {
 		shdr->CreditCharge = cpu_to_le16(DIV_ROUND_UP(rdata->bytes,
 						SMB2_MAX_BUFFER_SIZE));
-		shdr->CreditRequest =
-			cpu_to_le16(le16_to_cpu(shdr->CreditCharge) + 1);
+		shdr->CreditRequest = cpu_to_le16(le16_to_cpu(shdr->CreditCharge) + 8);
 
 		rc = adjust_credits(server, &rdata->credits, rdata->bytes);
 		if (rc)
@@ -4340,8 +4359,7 @@ smb2_async_writev(struct cifs_writedata *wdata,
 	if (wdata->credits.value > 0) {
 		shdr->CreditCharge = cpu_to_le16(DIV_ROUND_UP(wdata->bytes,
 						    SMB2_MAX_BUFFER_SIZE));
-		shdr->CreditRequest =
-			cpu_to_le16(le16_to_cpu(shdr->CreditCharge) + 1);
+		shdr->CreditRequest = cpu_to_le16(le16_to_cpu(shdr->CreditCharge) + 8);
 
 		rc = adjust_credits(server, &wdata->credits, wdata->bytes);
 		if (rc)

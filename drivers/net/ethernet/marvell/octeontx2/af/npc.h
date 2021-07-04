@@ -162,6 +162,13 @@ enum key_fields {
 	NPC_DIP_IPV4,
 	NPC_SIP_IPV6,
 	NPC_DIP_IPV6,
+	NPC_IPPROTO_TCP,
+	NPC_IPPROTO_UDP,
+	NPC_IPPROTO_SCTP,
+	NPC_IPPROTO_AH,
+	NPC_IPPROTO_ESP,
+	NPC_IPPROTO_ICMP,
+	NPC_IPPROTO_ICMP6,
 	NPC_SPORT_TCP,
 	NPC_DPORT_TCP,
 	NPC_SPORT_UDP,
@@ -414,6 +421,11 @@ struct nix_tx_action {
 #define TX_VTAG1_OP_MASK		GENMASK_ULL(45, 44)
 #define TX_VTAG1_LID_MASK		GENMASK_ULL(42, 40)
 #define TX_VTAG1_RELPTR_MASK		GENMASK_ULL(39, 32)
+
+/* NPC MCAM reserved entry index per nixlf */
+#define NIXLF_UCAST_ENTRY	0
+#define NIXLF_BCAST_ENTRY	1
+#define NIXLF_PROMISC_ENTRY	2
 
 struct npc_mcam_kex {
 	/* MKEX Profle Header */

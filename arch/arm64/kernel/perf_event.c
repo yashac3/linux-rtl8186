@@ -280,7 +280,7 @@ armv8pmu_event_attr_is_visible(struct kobject *kobj,
 	return 0;
 }
 
-static struct attribute_group armv8_pmuv3_events_attr_group = {
+static const struct attribute_group armv8_pmuv3_events_attr_group = {
 	.name = "events",
 	.attrs = armv8_pmuv3_event_attrs,
 	.is_visible = armv8pmu_event_attr_is_visible,
@@ -300,7 +300,7 @@ static struct attribute *armv8_pmuv3_format_attrs[] = {
 	NULL,
 };
 
-static struct attribute_group armv8_pmuv3_format_attr_group = {
+static const struct attribute_group armv8_pmuv3_format_attr_group = {
 	.name = "format",
 	.attrs = armv8_pmuv3_format_attrs,
 };
@@ -322,7 +322,7 @@ static struct attribute *armv8_pmuv3_caps_attrs[] = {
 	NULL,
 };
 
-static struct attribute_group armv8_pmuv3_caps_attr_group = {
+static const struct attribute_group armv8_pmuv3_caps_attr_group = {
 	.name = "caps",
 	.attrs = armv8_pmuv3_caps_attrs,
 };
@@ -460,7 +460,7 @@ static inline int armv8pmu_counter_has_overflowed(u32 pmnc, int idx)
 	return pmnc & BIT(ARMV8_IDX_TO_COUNTER(idx));
 }
 
-static inline u32 armv8pmu_read_evcntr(int idx)
+static inline u64 armv8pmu_read_evcntr(int idx)
 {
 	u32 counter = ARMV8_IDX_TO_COUNTER(idx);
 
@@ -470,9 +470,8 @@ static inline u32 armv8pmu_read_evcntr(int idx)
 static inline u64 armv8pmu_read_hw_counter(struct perf_event *event)
 {
 	int idx = event->hw.idx;
-	u64 val = 0;
+	u64 val = armv8pmu_read_evcntr(idx);
 
-	val = armv8pmu_read_evcntr(idx);
 	if (armv8pmu_event_is_chained(event))
 		val = (val << 32) | armv8pmu_read_evcntr(idx - 1);
 	return val;
@@ -520,7 +519,7 @@ static u64 armv8pmu_read_counter(struct perf_event *event)
 {
 	struct hw_perf_event *hwc = &event->hw;
 	int idx = hwc->idx;
-	u64 value = 0;
+	u64 value;
 
 	if (idx == ARMV8_IDX_CYCLE_COUNTER)
 		value = read_sysreg(pmccntr_el0);
@@ -810,7 +809,7 @@ static int armv8pmu_get_single_idx(struct pmu_hw_events *cpuc,
 {
 	int idx;
 
-	for (idx = ARMV8_IDX_COUNTER0; idx < cpu_pmu->num_events; idx ++) {
+	for (idx = ARMV8_IDX_COUNTER0; idx < cpu_pmu->num_events; idx++) {
 		if (!test_and_set_bit(idx, cpuc->used_mask))
 			return idx;
 	}
@@ -1188,6 +1187,12 @@ static int armv8_a77_pmu_init(struct arm_pmu *cpu_pmu)
 				       armv8_pmuv3_map_event);
 }
 
+static int armv8_a78_pmu_init(struct arm_pmu *cpu_pmu)
+{
+	return armv8_pmu_init_nogroups(cpu_pmu, "armv8_cortex_a78",
+				       armv8_pmuv3_map_event);
+}
+
 static int armv8_e1_pmu_init(struct arm_pmu *cpu_pmu)
 {
 	return armv8_pmu_init_nogroups(cpu_pmu, "armv8_neoverse_e1",
@@ -1225,6 +1230,7 @@ static const struct of_device_id armv8_pmu_of_device_ids[] = {
 	{.compatible = "arm,cortex-a75-pmu",	.data = armv8_a75_pmu_init},
 	{.compatible = "arm,cortex-a76-pmu",	.data = armv8_a76_pmu_init},
 	{.compatible = "arm,cortex-a77-pmu",	.data = armv8_a77_pmu_init},
+	{.compatible = "arm,cortex-a78-pmu",	.data = armv8_a78_pmu_init},
 	{.compatible = "arm,neoverse-e1-pmu",	.data = armv8_e1_pmu_init},
 	{.compatible = "arm,neoverse-n1-pmu",	.data = armv8_n1_pmu_init},
 	{.compatible = "cavium,thunder-pmu",	.data = armv8_thunder_pmu_init},

@@ -345,15 +345,9 @@ static bool rtw_fw_dump_crash_log(struct rtw_dev *rtwdev)
 			"fw crash dump's seq is wrong: %d\n", seq);
 		goto free_buf;
 	}
-	if (seq == 0 &&
-	    (GET_FW_DUMP_TLV_TYPE(buf) != FW_CD_TYPE ||
-	     GET_FW_DUMP_TLV_LEN(buf) != FW_CD_LEN ||
-	     GET_FW_DUMP_TLV_VAL(buf) != FW_CD_VAL)) {
-		rtw_dbg(rtwdev, RTW_DBG_FW, "fw crash dump's tlv is wrong\n");
-		goto free_buf;
-	}
 
-	print_hex_dump_bytes("rtw88 fw dump: ", DUMP_PREFIX_OFFSET, buf, size);
+	print_hex_dump(KERN_ERR, "rtw88 fw dump: ", DUMP_PREFIX_OFFSET, 16, 1,
+		       buf, size, true);
 
 	if (GET_FW_DUMP_MORE(buf) == 1) {
 		rtwdev->fw.prev_dump_seq = seq;
@@ -367,6 +361,78 @@ exit:
 
 	return ret;
 }
+
+int rtw_dump_fw(struct rtw_dev *rtwdev, const u32 ocp_src, u32 size,
+		const char *prefix_str)
+{
+	u32 rxff = rtwdev->chip->fw_rxff_size;
+	u32 dump_size, done_size = 0;
+	u8 *buf;
+	int ret;
+
+	buf = vzalloc(size);
+	if (!buf)
+		return -ENOMEM;
+
+	while (size) {
+		dump_size = size > rxff ? rxff : size;
+
+		ret = rtw_ddma_to_fw_fifo(rtwdev, ocp_src + done_size,
+					  dump_size);
+		if (ret) {
+			rtw_err(rtwdev,
+				"ddma fw 0x%x [+0x%x] to fw fifo fail\n",
+				ocp_src, done_size);
+			goto exit;
+		}
+
+		ret = rtw_fw_dump_fifo(rtwdev, RTW_FW_FIFO_SEL_RXBUF_FW, 0,
+				       dump_size, (u32 *)(buf + done_size));
+		if (ret) {
+			rtw_err(rtwdev,
+				"dump fw 0x%x [+0x%x] from fw fifo fail\n",
+				ocp_src, done_size);
+			goto exit;
+		}
+
+		size -= dump_size;
+		done_size += dump_size;
+	}
+
+	print_hex_dump(KERN_ERR, prefix_str, DUMP_PREFIX_OFFSET, 16, 1,
+		       buf, done_size, true);
+
+exit:
+	vfree(buf);
+	return ret;
+}
+EXPORT_SYMBOL(rtw_dump_fw);
+
+int rtw_dump_reg(struct rtw_dev *rtwdev, const u32 addr, const u32 size,
+		 const char *prefix_str)
+{
+	u8 *buf;
+	u32 i;
+
+	if (addr & 0x3) {
+		WARN(1, "should be 4-byte aligned, addr = 0x%08x\n", addr);
+		return -EINVAL;
+	}
+
+	buf = vzalloc(size);
+	if (!buf)
+		return -ENOMEM;
+
+	for (i = 0; i < size; i += 4)
+		*(u32 *)(buf + i) = rtw_read32(rtwdev, addr + i);
+
+	print_hex_dump(KERN_ERR, prefix_str, DUMP_PREFIX_OFFSET, 16, 4, buf,
+		       size, true);
+
+	vfree(buf);
+	return 0;
+}
+EXPORT_SYMBOL(rtw_dump_reg);
 
 void rtw_vif_assoc_changed(struct rtw_vif *rtwvif,
 			   struct ieee80211_bss_conf *conf)
@@ -419,10 +485,8 @@ void rtw_fw_recovery(struct rtw_dev *rtwdev)
 		ieee80211_queue_work(rtwdev->hw, &rtwdev->fw_recovery_work);
 }
 
-static void rtw_fw_recovery_work(struct work_struct *work)
+static void __fw_recovery_work(struct rtw_dev *rtwdev)
 {
-	struct rtw_dev *rtwdev = container_of(work, struct rtw_dev,
-					      fw_recovery_work);
 
 	/* rtw_fw_dump_crash_log() returns false indicates that there are
 	 * still more log to dump. Driver set 0x1cf[7:0] = 0x1 to tell firmware
@@ -435,18 +499,26 @@ static void rtw_fw_recovery_work(struct work_struct *work)
 	}
 	rtwdev->fw.prev_dump_seq = 0;
 
+	set_bit(RTW_FLAG_RESTARTING, rtwdev->flags);
+	rtw_chip_dump_fw_crash(rtwdev);
+
 	WARN(1, "firmware crash, start reset and recover\n");
 
-	mutex_lock(&rtwdev->mutex);
-
-	set_bit(RTW_FLAG_RESTARTING, rtwdev->flags);
 	rcu_read_lock();
 	rtw_iterate_keys_rcu(rtwdev, NULL, rtw_reset_key_iter, rtwdev);
 	rcu_read_unlock();
 	rtw_iterate_stas_atomic(rtwdev, rtw_reset_sta_iter, rtwdev);
 	rtw_iterate_vifs_atomic(rtwdev, rtw_reset_vif_iter, rtwdev);
 	rtw_enter_ips(rtwdev);
+}
 
+static void rtw_fw_recovery_work(struct work_struct *work)
+{
+	struct rtw_dev *rtwdev = container_of(work, struct rtw_dev,
+					      fw_recovery_work);
+
+	mutex_lock(&rtwdev->mutex);
+	__fw_recovery_work(rtwdev);
 	mutex_unlock(&rtwdev->mutex);
 
 	ieee80211_restart_hw(rtwdev->hw);
@@ -894,6 +966,7 @@ static u64 rtw_update_rate_mask(struct rtw_dev *rtwdev,
 
 void rtw_update_sta_info(struct rtw_dev *rtwdev, struct rtw_sta_info *si)
 {
+	struct rtw_dm_info *dm_info = &rtwdev->dm_info;
 	struct ieee80211_sta *sta = si->sta;
 	struct rtw_efuse *efuse = &rtwdev->efuse;
 	struct rtw_hal *hal = &rtwdev->hal;
@@ -938,6 +1011,7 @@ void rtw_update_sta_info(struct rtw_dev *rtwdev, struct rtw_sta_info *si)
 		} else {
 			wireless_set = WIRELESS_OFDM;
 		}
+		dm_info->rrsr_val_init = RRSR_INIT_5G;
 	} else if (hal->current_band_type == RTW_BAND_2G) {
 		ra_mask |= sta->supp_rates[NL80211_BAND_2GHZ];
 		if (sta->vht_cap.vht_supported) {
@@ -955,6 +1029,7 @@ void rtw_update_sta_info(struct rtw_dev *rtwdev, struct rtw_sta_info *si)
 		} else {
 			wireless_set = WIRELESS_CCK | WIRELESS_OFDM;
 		}
+		dm_info->rrsr_val_init = RRSR_INIT_2G;
 	} else {
 		rtw_err(rtwdev, "Unknown band type\n");
 		wireless_set = 0;
@@ -1135,6 +1210,7 @@ int rtw_core_start(struct rtw_dev *rtwdev)
 static void rtw_power_off(struct rtw_dev *rtwdev)
 {
 	rtw_hci_stop(rtwdev);
+	rtw_coex_power_off_setting(rtwdev);
 	rtw_mac_power_off(rtwdev);
 }
 
@@ -1276,7 +1352,6 @@ static void rtw_set_supported_band(struct ieee80211_hw *hw,
 
 err_out:
 	rtw_err(rtwdev, "failed to set supported band\n");
-	kfree(sband);
 }
 
 static void rtw_unset_supported_band(struct ieee80211_hw *hw,
@@ -1391,7 +1466,6 @@ static int rtw_chip_parameter_setup(struct rtw_dev *rtwdev)
 	struct rtw_chip_info *chip = rtwdev->chip;
 	struct rtw_hal *hal = &rtwdev->hal;
 	struct rtw_efuse *efuse = &rtwdev->efuse;
-	int ret = 0;
 
 	switch (rtw_hci_type(rtwdev)) {
 	case RTW_HCI_TYPE_PCIE:
@@ -1429,7 +1503,7 @@ static int rtw_chip_parameter_setup(struct rtw_dev *rtwdev)
 
 	hal->bfee_sts_cap = 3;
 
-	return ret;
+	return 0;
 }
 
 static int rtw_chip_efuse_enable(struct rtw_dev *rtwdev)
@@ -1591,6 +1665,8 @@ static int rtw_chip_board_info_setup(struct rtw_dev *rtwdev)
 	rtw_phy_setup_phy_cond(rtwdev, 0);
 
 	rtw_phy_init_tx_power(rtwdev);
+	if (rfe_def->agc_btg_tbl)
+		rtw_load_table(rtwdev, rfe_def->agc_btg_tbl);
 	rtw_load_table(rtwdev, rfe_def->phy_pg_tbl);
 	rtw_load_table(rtwdev, rfe_def->txpwr_lmt_tbl);
 	rtw_phy_tx_power_by_rate_config(hal);
@@ -1654,7 +1730,7 @@ int rtw_core_init(struct rtw_dev *rtwdev)
 
 	timer_setup(&rtwdev->tx_report.purge_timer,
 		    rtw_tx_report_purge_timer, 0);
-	tasklet_setup(&rtwdev->tx_tasklet, rtw_tx_tasklet);
+	rtwdev->tx_wq = alloc_workqueue("rtw_tx_wq", WQ_UNBOUND | WQ_HIGHPRI, 0);
 
 	INIT_DELAYED_WORK(&rtwdev->watch_dog_work, rtw_watch_dog_work);
 	INIT_DELAYED_WORK(&coex->bt_relink_work, rtw_coex_bt_relink_work);
@@ -1666,6 +1742,7 @@ int rtw_core_init(struct rtw_dev *rtwdev)
 	INIT_DELAYED_WORK(&coex->bt_multi_link_remain_work,
 			  rtw_coex_bt_multi_link_remain_work);
 	INIT_DELAYED_WORK(&coex->wl_ccklock_work, rtw_coex_wl_ccklock_work);
+	INIT_WORK(&rtwdev->tx_work, rtw_tx_work);
 	INIT_WORK(&rtwdev->c2h_work, rtw_c2h_work);
 	INIT_WORK(&rtwdev->fw_recovery_work, rtw_fw_recovery_work);
 	INIT_WORK(&rtwdev->ba_work, rtw_txq_ba_work);
@@ -1732,7 +1809,7 @@ void rtw_core_deinit(struct rtw_dev *rtwdev)
 	if (wow_fw->firmware)
 		release_firmware(wow_fw->firmware);
 
-	tasklet_kill(&rtwdev->tx_tasklet);
+	destroy_workqueue(rtwdev->tx_wq);
 	spin_lock_irqsave(&rtwdev->tx_report.q_lock, flags);
 	skb_queue_purge(&rtwdev->tx_report.queue);
 	spin_unlock_irqrestore(&rtwdev->tx_report.q_lock, flags);

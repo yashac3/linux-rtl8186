@@ -70,6 +70,26 @@ xfs_inode_hasattr(
 	return 1;
 }
 
+/*
+ * Returns true if the there is exactly only block in the attr fork, in which
+ * case the attribute fork consists of a single leaf block entry.
+ */
+bool
+xfs_attr_is_leaf(
+	struct xfs_inode	*ip)
+{
+	struct xfs_ifork	*ifp = ip->i_afp;
+	struct xfs_iext_cursor	icur;
+	struct xfs_bmbt_irec	imap;
+
+	if (ifp->if_nextents != 1 || ifp->if_format != XFS_DINODE_FMT_EXTENTS)
+		return false;
+
+	xfs_iext_first(ifp, &icur);
+	xfs_iext_get_extent(ifp, &icur, &imap);
+	return imap.br_startoff == 0 && imap.br_blockcount == 1;
+}
+
 /*========================================================================
  * Overall external interface routines.
  *========================================================================*/
@@ -89,7 +109,7 @@ xfs_attr_get_ilocked(
 
 	if (args->dp->i_afp->if_format == XFS_DINODE_FMT_LOCAL)
 		return xfs_attr_shortform_getvalue(args);
-	if (xfs_bmap_one_block(args->dp, XFS_ATTR_FORK))
+	if (xfs_attr_is_leaf(args->dp))
 		return xfs_attr_leaf_get(args);
 	return xfs_attr_node_get(args);
 }
@@ -293,7 +313,7 @@ xfs_attr_set_args(
 			return error;
 	}
 
-	if (xfs_bmap_one_block(dp, XFS_ATTR_FORK)) {
+	if (xfs_attr_is_leaf(dp)) {
 		error = xfs_attr_leaf_addname(args);
 		if (error != -ENOSPC)
 			return error;
@@ -342,12 +362,10 @@ xfs_has_attr(
 	if (!xfs_inode_hasattr(dp))
 		return -ENOATTR;
 
-	if (dp->i_afp->if_format == XFS_DINODE_FMT_LOCAL) {
-		ASSERT(dp->i_afp->if_flags & XFS_IFINLINE);
+	if (dp->i_afp->if_format == XFS_DINODE_FMT_LOCAL)
 		return xfs_attr_sf_findname(args, NULL, NULL);
-	}
 
-	if (xfs_bmap_one_block(dp, XFS_ATTR_FORK)) {
+	if (xfs_attr_is_leaf(dp)) {
 		error = xfs_attr_leaf_hasname(args, &bp);
 
 		if (bp)
@@ -366,21 +384,14 @@ int
 xfs_attr_remove_args(
 	struct xfs_da_args      *args)
 {
-	struct xfs_inode	*dp = args->dp;
-	int			error;
+	if (!xfs_inode_hasattr(args->dp))
+		return -ENOATTR;
 
-	if (!xfs_inode_hasattr(dp)) {
-		error = -ENOATTR;
-	} else if (dp->i_afp->if_format == XFS_DINODE_FMT_LOCAL) {
-		ASSERT(dp->i_afp->if_flags & XFS_IFINLINE);
-		error = xfs_attr_shortform_remove(args);
-	} else if (xfs_bmap_one_block(dp, XFS_ATTR_FORK)) {
-		error = xfs_attr_leaf_removename(args);
-	} else {
-		error = xfs_attr_node_removename(args);
-	}
-
-	return error;
+	if (args->dp->i_afp->if_format == XFS_DINODE_FMT_LOCAL)
+		return xfs_attr_shortform_remove(args);
+	if (xfs_attr_is_leaf(args->dp))
+		return xfs_attr_leaf_removename(args);
+	return xfs_attr_node_removename(args);
 }
 
 /*
@@ -396,6 +407,7 @@ xfs_attr_set(
 	struct xfs_trans_res	tres;
 	bool			rsvd = (args->attr_filter & XFS_ATTR_ROOT);
 	int			error, local;
+	int			rmt_blks = 0;
 	unsigned int		total;
 
 	if (XFS_FORCED_SHUTDOWN(dp->i_mount))
@@ -442,34 +454,33 @@ xfs_attr_set(
 		tres.tr_logcount = XFS_ATTRSET_LOG_COUNT;
 		tres.tr_logflags = XFS_TRANS_PERM_LOG_RES;
 		total = args->total;
+
+		if (!local)
+			rmt_blks = xfs_attr3_rmt_blocks(mp, args->valuelen);
 	} else {
 		XFS_STATS_INC(mp, xs_attr_remove);
 
 		tres = M_RES(mp)->tr_attrrm;
 		total = XFS_ATTRRM_SPACE_RES(mp);
+		rmt_blks = xfs_attr3_rmt_blocks(mp, XFS_XATTR_SIZE_MAX);
 	}
 
 	/*
 	 * Root fork attributes can use reserved data blocks for this
 	 * operation if necessary
 	 */
-	error = xfs_trans_alloc(mp, &tres, total, 0,
-			rsvd ? XFS_TRANS_RESERVE : 0, &args->trans);
+	error = xfs_trans_alloc_inode(dp, &tres, total, 0, rsvd, &args->trans);
 	if (error)
 		return error;
 
-	xfs_ilock(dp, XFS_ILOCK_EXCL);
-	xfs_trans_ijoin(args->trans, dp, 0);
-	if (args->value) {
-		unsigned int	quota_flags = XFS_QMOPT_RES_REGBLKS;
-
-		if (rsvd)
-			quota_flags |= XFS_QMOPT_FORCE_RES;
-		error = xfs_trans_reserve_quota_nblks(args->trans, dp,
-				args->total, 0, quota_flags);
+	if (args->value || xfs_inode_hasattr(dp)) {
+		error = xfs_iext_count_may_overflow(dp, XFS_ATTR_FORK,
+				XFS_IEXT_ATTR_MANIP_CNT(rmt_blks));
 		if (error)
 			goto out_trans_cancel;
+	}
 
+	if (args->value) {
 		error = xfs_has_attr(args);
 		if (error == -EEXIST && (args->attr_flags & XATTR_CREATE))
 			goto out_trans_cancel;
@@ -928,6 +939,7 @@ restart:
 	 * Search to see if name already exists, and get back a pointer
 	 * to where it should go.
 	 */
+	error = 0;
 	retval = xfs_attr_node_hasname(args, &state);
 	if (retval != -ENOATTR && retval != -EEXIST)
 		goto out;
@@ -1282,7 +1294,7 @@ xfs_attr_node_removename(
 	/*
 	 * If the result is small enough, push it all into the inode.
 	 */
-	if (xfs_bmap_one_block(dp, XFS_ATTR_FORK))
+	if (xfs_attr_is_leaf(dp))
 		error = xfs_attr_node_shrink(args, state);
 
 out:

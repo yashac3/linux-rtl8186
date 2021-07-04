@@ -199,6 +199,7 @@
  * must end with any of these keywords:
  *   break;
  *   fallthrough;
+ *   continue;
  *   goto <label>;
  *   return [expression];
  *
@@ -209,6 +210,12 @@
 #else
 # define fallthrough                    do {} while (0)  /* fallthrough */
 #endif
+
+/*
+ * gcc: https://gcc.gnu.org/onlinedocs/gcc/Common-Function-Attributes.html#Common-Function-Attributes
+ * clang: https://clang.llvm.org/docs/AttributeReference.html#flatten
+ */
+# define __flatten			__attribute__((flatten))
 
 /*
  * Note the missing underscores.

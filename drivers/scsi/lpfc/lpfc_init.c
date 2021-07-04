@@ -1,7 +1,7 @@
 /*******************************************************************
  * This file is part of the Emulex Linux Device Driver for         *
  * Fibre Channel Host Bus Adapters.                                *
- * Copyright (C) 2017-2020 Broadcom. All Rights Reserved. The term *
+ * Copyright (C) 2017-2021 Broadcom. All Rights Reserved. The term *
  * “Broadcom” refers to Broadcom Inc. and/or its subsidiaries.  *
  * Copyright (C) 2004-2016 Emulex.  All rights reserved.           *
  * EMULEX and SLI are trademarks of Emulex.                        *
@@ -254,13 +254,13 @@ lpfc_config_port_prep(struct lpfc_hba *phba)
 		if (mb->un.varDmp.word_cnt == 0)
 			break;
 
-		i =  mb->un.varDmp.word_cnt * sizeof(uint32_t);
-		if (offset + i >  DMP_VPD_SIZE)
-			i =  DMP_VPD_SIZE - offset;
+		if (mb->un.varDmp.word_cnt > DMP_VPD_SIZE - offset)
+			mb->un.varDmp.word_cnt = DMP_VPD_SIZE - offset;
 		lpfc_sli_pcimem_bcopy(((uint8_t *)mb) + DMP_RSP_OFFSET,
-				      lpfc_vpd_data  + offset, i);
-		offset += i;
-	} while (offset < DMP_VPD_SIZE);
+				      lpfc_vpd_data + offset,
+				      mb->un.varDmp.word_cnt);
+		offset += mb->un.varDmp.word_cnt;
+	} while (mb->un.varDmp.word_cnt && offset < DMP_VPD_SIZE);
 
 	lpfc_parse_vpd(phba, lpfc_vpd_data, offset);
 
@@ -591,7 +591,7 @@ lpfc_config_port_post(struct lpfc_hba *phba)
 	/* Set up heart beat (HB) timer */
 	mod_timer(&phba->hb_tmofunc,
 		  jiffies + msecs_to_jiffies(1000 * LPFC_HB_MBOX_INTERVAL));
-	phba->hb_outstanding = 0;
+	phba->hba_flag &= ~(HBA_HBEAT_INP | HBA_HBEAT_TMO);
 	phba->last_completion_time = jiffies;
 	/* Set up error attention (ERATT) polling timer */
 	mod_timer(&phba->eratt_poll,
@@ -1043,12 +1043,11 @@ lpfc_hba_down_post_s4(struct lpfc_hba *phba)
 	 * driver is unloading or reposted if the driver is restarting
 	 * the port.
 	 */
-	spin_lock_irq(&phba->hbalock);  /* required for lpfc_els_sgl_list and */
-					/* scsl_buf_list */
+
 	/* sgl_list_lock required because worker thread uses this
 	 * list.
 	 */
-	spin_lock(&phba->sli4_hba.sgl_list_lock);
+	spin_lock_irq(&phba->sli4_hba.sgl_list_lock);
 	list_for_each_entry(sglq_entry,
 		&phba->sli4_hba.lpfc_abts_els_sgl_list, list)
 		sglq_entry->state = SGL_FREED;
@@ -1057,11 +1056,12 @@ lpfc_hba_down_post_s4(struct lpfc_hba *phba)
 			&phba->sli4_hba.lpfc_els_sgl_list);
 
 
-	spin_unlock(&phba->sli4_hba.sgl_list_lock);
+	spin_unlock_irq(&phba->sli4_hba.sgl_list_lock);
 
 	/* abts_xxxx_buf_list_lock required because worker thread uses this
 	 * list.
 	 */
+	spin_lock_irq(&phba->hbalock);
 	cnt = 0;
 	for (idx = 0; idx < phba->cfg_hdw_queue; idx++) {
 		qp = &phba->sli4_hba.hdwq[idx];
@@ -1204,10 +1204,10 @@ lpfc_hb_mbox_cmpl(struct lpfc_hba * phba, LPFC_MBOXQ_t * pmboxq)
 	unsigned long drvr_flag;
 
 	spin_lock_irqsave(&phba->hbalock, drvr_flag);
-	phba->hb_outstanding = 0;
+	phba->hba_flag &= ~(HBA_HBEAT_INP | HBA_HBEAT_TMO);
 	spin_unlock_irqrestore(&phba->hbalock, drvr_flag);
 
-	/* Check and reset heart-beat timer is necessary */
+	/* Check and reset heart-beat timer if necessary */
 	mempool_free(pmboxq, phba->mbox_mem_pool);
 	if (!(phba->pport->fc_flag & FC_OFFLINE_MODE) &&
 		!(phba->link_state == LPFC_HBA_ERROR) &&
@@ -1381,6 +1381,60 @@ static void lpfc_hb_mxp_handler(struct lpfc_hba *phba)
 }
 
 /**
+ * lpfc_issue_hb_mbox - Issues heart-beat mailbox command
+ * @phba: pointer to lpfc hba data structure.
+ *
+ * If a HB mbox is not already in progrees, this routine will allocate
+ * a LPFC_MBOXQ_t, populate it with a MBX_HEARTBEAT (0x31) command,
+ * and issue it. The HBA_HBEAT_INP flag means the command is in progress.
+ **/
+int
+lpfc_issue_hb_mbox(struct lpfc_hba *phba)
+{
+	LPFC_MBOXQ_t *pmboxq;
+	int retval;
+
+	/* Is a Heartbeat mbox already in progress */
+	if (phba->hba_flag & HBA_HBEAT_INP)
+		return 0;
+
+	pmboxq = mempool_alloc(phba->mbox_mem_pool, GFP_KERNEL);
+	if (!pmboxq)
+		return -ENOMEM;
+
+	lpfc_heart_beat(phba, pmboxq);
+	pmboxq->mbox_cmpl = lpfc_hb_mbox_cmpl;
+	pmboxq->vport = phba->pport;
+	retval = lpfc_sli_issue_mbox(phba, pmboxq, MBX_NOWAIT);
+
+	if (retval != MBX_BUSY && retval != MBX_SUCCESS) {
+		mempool_free(pmboxq, phba->mbox_mem_pool);
+		return -ENXIO;
+	}
+	phba->hba_flag |= HBA_HBEAT_INP;
+
+	return 0;
+}
+
+/**
+ * lpfc_issue_hb_tmo - Signals heartbeat timer to issue mbox command
+ * @phba: pointer to lpfc hba data structure.
+ *
+ * The heartbeat timer (every 5 sec) will fire. If the HBA_HBEAT_TMO
+ * flag is set, it will force a MBX_HEARTBEAT mbox command, regardless
+ * of the value of lpfc_enable_hba_heartbeat.
+ * If lpfc_enable_hba_heartbeat is set, the timeout routine will always
+ * try to issue a MBX_HEARTBEAT mbox command.
+ **/
+void
+lpfc_issue_hb_tmo(struct lpfc_hba *phba)
+{
+	if (phba->cfg_enable_hba_heartbeat)
+		return;
+	phba->hba_flag |= HBA_HBEAT_TMO;
+}
+
+/**
  * lpfc_hb_timeout_handler - The HBA-timer timeout handler
  * @phba: pointer to lpfc hba data structure.
  *
@@ -1400,9 +1454,9 @@ void
 lpfc_hb_timeout_handler(struct lpfc_hba *phba)
 {
 	struct lpfc_vport **vports;
-	LPFC_MBOXQ_t *pmboxq;
 	struct lpfc_dmabuf *buf_ptr;
-	int retval, i;
+	int retval = 0;
+	int i, tmo;
 	struct lpfc_sli *psli = &phba->sli;
 	LIST_HEAD(completions);
 
@@ -1424,24 +1478,6 @@ lpfc_hb_timeout_handler(struct lpfc_hba *phba)
 		(phba->pport->fc_flag & FC_OFFLINE_MODE))
 		return;
 
-	spin_lock_irq(&phba->pport->work_port_lock);
-
-	if (time_after(phba->last_completion_time +
-			msecs_to_jiffies(1000 * LPFC_HB_MBOX_INTERVAL),
-			jiffies)) {
-		spin_unlock_irq(&phba->pport->work_port_lock);
-		if (!phba->hb_outstanding)
-			mod_timer(&phba->hb_tmofunc,
-				jiffies +
-				msecs_to_jiffies(1000 * LPFC_HB_MBOX_INTERVAL));
-		else
-			mod_timer(&phba->hb_tmofunc,
-				jiffies +
-				msecs_to_jiffies(1000 * LPFC_HB_MBOX_TIMEOUT));
-		return;
-	}
-	spin_unlock_irq(&phba->pport->work_port_lock);
-
 	if (phba->elsbuf_cnt &&
 		(phba->elsbuf_cnt == phba->elsbuf_prev_cnt)) {
 		spin_lock_irq(&phba->hbalock);
@@ -1461,37 +1497,43 @@ lpfc_hb_timeout_handler(struct lpfc_hba *phba)
 
 	/* If there is no heart beat outstanding, issue a heartbeat command */
 	if (phba->cfg_enable_hba_heartbeat) {
-		if (!phba->hb_outstanding) {
+		/* If IOs are completing, no need to issue a MBX_HEARTBEAT */
+		spin_lock_irq(&phba->pport->work_port_lock);
+		if (time_after(phba->last_completion_time +
+				msecs_to_jiffies(1000 * LPFC_HB_MBOX_INTERVAL),
+				jiffies)) {
+			spin_unlock_irq(&phba->pport->work_port_lock);
+			if (phba->hba_flag & HBA_HBEAT_INP)
+				tmo = (1000 * LPFC_HB_MBOX_TIMEOUT);
+			else
+				tmo = (1000 * LPFC_HB_MBOX_INTERVAL);
+			goto out;
+		}
+		spin_unlock_irq(&phba->pport->work_port_lock);
+
+		/* Check if a MBX_HEARTBEAT is already in progress */
+		if (phba->hba_flag & HBA_HBEAT_INP) {
+			/*
+			 * If heart beat timeout called with HBA_HBEAT_INP set
+			 * we need to give the hb mailbox cmd a chance to
+			 * complete or TMO.
+			 */
+			lpfc_printf_log(phba, KERN_WARNING, LOG_INIT,
+				"0459 Adapter heartbeat still outstanding: "
+				"last compl time was %d ms.\n",
+				jiffies_to_msecs(jiffies
+					 - phba->last_completion_time));
+			tmo = (1000 * LPFC_HB_MBOX_TIMEOUT);
+		} else {
 			if ((!(psli->sli_flag & LPFC_SLI_MBOX_ACTIVE)) &&
 				(list_empty(&psli->mboxq))) {
-				pmboxq = mempool_alloc(phba->mbox_mem_pool,
-							GFP_KERNEL);
-				if (!pmboxq) {
-					mod_timer(&phba->hb_tmofunc,
-						 jiffies +
-						 msecs_to_jiffies(1000 *
-						 LPFC_HB_MBOX_INTERVAL));
-					return;
-				}
 
-				lpfc_heart_beat(phba, pmboxq);
-				pmboxq->mbox_cmpl = lpfc_hb_mbox_cmpl;
-				pmboxq->vport = phba->pport;
-				retval = lpfc_sli_issue_mbox(phba, pmboxq,
-						MBX_NOWAIT);
-
-				if (retval != MBX_BUSY &&
-					retval != MBX_SUCCESS) {
-					mempool_free(pmboxq,
-							phba->mbox_mem_pool);
-					mod_timer(&phba->hb_tmofunc,
-						jiffies +
-						msecs_to_jiffies(1000 *
-						LPFC_HB_MBOX_INTERVAL));
-					return;
+				retval = lpfc_issue_hb_mbox(phba);
+				if (retval) {
+					tmo = (1000 * LPFC_HB_MBOX_INTERVAL);
+					goto out;
 				}
 				phba->skipped_hb = 0;
-				phba->hb_outstanding = 1;
 			} else if (time_before_eq(phba->last_completion_time,
 					phba->skipped_hb)) {
 				lpfc_printf_log(phba, KERN_INFO, LOG_INIT,
@@ -1502,30 +1544,23 @@ lpfc_hb_timeout_handler(struct lpfc_hba *phba)
 			} else
 				phba->skipped_hb = jiffies;
 
-			mod_timer(&phba->hb_tmofunc,
-				 jiffies +
-				 msecs_to_jiffies(1000 * LPFC_HB_MBOX_TIMEOUT));
-			return;
-		} else {
-			/*
-			* If heart beat timeout called with hb_outstanding set
-			* we need to give the hb mailbox cmd a chance to
-			* complete or TMO.
-			*/
-			lpfc_printf_log(phba, KERN_WARNING, LOG_INIT,
-					"0459 Adapter heartbeat still out"
-					"standing:last compl time was %d ms.\n",
-					jiffies_to_msecs(jiffies
-						 - phba->last_completion_time));
-			mod_timer(&phba->hb_tmofunc,
-				jiffies +
-				msecs_to_jiffies(1000 * LPFC_HB_MBOX_TIMEOUT));
+			tmo = (1000 * LPFC_HB_MBOX_TIMEOUT);
+			goto out;
 		}
 	} else {
-			mod_timer(&phba->hb_tmofunc,
-				jiffies +
-				msecs_to_jiffies(1000 * LPFC_HB_MBOX_INTERVAL));
+		/* Check to see if we want to force a MBX_HEARTBEAT */
+		if (phba->hba_flag & HBA_HBEAT_TMO) {
+			retval = lpfc_issue_hb_mbox(phba);
+			if (retval)
+				tmo = (1000 * LPFC_HB_MBOX_INTERVAL);
+			else
+				tmo = (1000 * LPFC_HB_MBOX_TIMEOUT);
+			goto out;
+		}
+		tmo = (1000 * LPFC_HB_MBOX_INTERVAL);
 	}
+out:
+	mod_timer(&phba->hb_tmofunc, jiffies + msecs_to_jiffies(tmo));
 }
 
 /**
@@ -1830,9 +1865,19 @@ lpfc_sli4_port_sta_fn_reset(struct lpfc_hba *phba, int mbx_action,
 
 	/* need reset: attempt for port recovery */
 	if (en_rn_msg)
-		lpfc_printf_log(phba, KERN_ERR, LOG_TRACE_EVENT,
+		lpfc_printf_log(phba, KERN_ERR, LOG_SLI,
 				"2887 Reset Needed: Attempting Port "
 				"Recovery...\n");
+
+	/* If we are no wait, the HBA has been reset and is not
+	 * functional, thus we should clear LPFC_SLI_ACTIVE flag.
+	 */
+	if (mbx_action == LPFC_MBX_NO_WAIT) {
+		spin_lock_irq(&phba->hbalock);
+		phba->sli.sli_flag &= ~LPFC_SLI_ACTIVE;
+		spin_unlock_irq(&phba->hbalock);
+	}
+
 	lpfc_offline_prep(phba, mbx_action);
 	lpfc_sli_flush_io_rings(phba);
 	lpfc_offline(phba);
@@ -2979,7 +3024,7 @@ lpfc_stop_hba_timers(struct lpfc_hba *phba)
 		del_timer_sync(&phba->rrq_tmr);
 		phba->hba_flag &= ~HBA_RRQ_ACTIVE;
 	}
-	phba->hb_outstanding = 0;
+	phba->hba_flag &= ~(HBA_HBEAT_INP | HBA_HBEAT_TMO);
 
 	switch (phba->pci_dev_grp) {
 	case LPFC_PCI_DEV_LP:
@@ -3507,7 +3552,7 @@ lpfc_offline_prep(struct lpfc_hba *phba, int mbx_action)
 					lpfc_printf_vlog(vports[i], KERN_INFO,
 						 LOG_NODE | LOG_DISCOVERY,
 						 "0011 Free RPI x%x on "
-						 "ndlp: %p did x%x\n",
+						 "ndlp: x%px did x%x\n",
 						 ndlp->nlp_rpi, ndlp,
 						 ndlp->nlp_DID);
 					lpfc_sli4_free_rpi(phba, ndlp->nlp_rpi);
@@ -3592,7 +3637,11 @@ lpfc_offline(struct lpfc_hba *phba)
 			spin_unlock_irq(shost->host_lock);
 		}
 	lpfc_destroy_vport_work_array(phba, vports);
-	__lpfc_cpuhp_remove(phba);
+	/* If OFFLINE flag is clear (i.e. unloading), cpuhp removal is handled
+	 * in hba_unset
+	 */
+	if (phba->pport->fc_flag & FC_OFFLINE_MODE)
+		__lpfc_cpuhp_remove(phba);
 
 	if (phba->cfg_xri_rebalancing)
 		lpfc_destroy_multixri_pools(phba);
@@ -3755,12 +3804,10 @@ lpfc_sli4_els_sgl_update(struct lpfc_hba *phba)
 			sglq_entry->state = SGL_FREED;
 			list_add_tail(&sglq_entry->list, &els_sgl_list);
 		}
-		spin_lock_irq(&phba->hbalock);
-		spin_lock(&phba->sli4_hba.sgl_list_lock);
+		spin_lock_irq(&phba->sli4_hba.sgl_list_lock);
 		list_splice_init(&els_sgl_list,
 				 &phba->sli4_hba.lpfc_els_sgl_list);
-		spin_unlock(&phba->sli4_hba.sgl_list_lock);
-		spin_unlock_irq(&phba->hbalock);
+		spin_unlock_irq(&phba->sli4_hba.sgl_list_lock);
 	} else if (els_xri_cnt < phba->sli4_hba.els_xri_cnt) {
 		/* els xri-sgl shrinked */
 		xri_cnt = phba->sli4_hba.els_xri_cnt - els_xri_cnt;
@@ -3768,8 +3815,7 @@ lpfc_sli4_els_sgl_update(struct lpfc_hba *phba)
 				"3158 ELS xri-sgl count decreased from "
 				"%d to %d\n", phba->sli4_hba.els_xri_cnt,
 				els_xri_cnt);
-		spin_lock_irq(&phba->hbalock);
-		spin_lock(&phba->sli4_hba.sgl_list_lock);
+		spin_lock_irq(&phba->sli4_hba.sgl_list_lock);
 		list_splice_init(&phba->sli4_hba.lpfc_els_sgl_list,
 				 &els_sgl_list);
 		/* release extra els sgls from list */
@@ -3784,8 +3830,7 @@ lpfc_sli4_els_sgl_update(struct lpfc_hba *phba)
 		}
 		list_splice_init(&els_sgl_list,
 				 &phba->sli4_hba.lpfc_els_sgl_list);
-		spin_unlock(&phba->sli4_hba.sgl_list_lock);
-		spin_unlock_irq(&phba->hbalock);
+		spin_unlock_irq(&phba->sli4_hba.sgl_list_lock);
 	} else
 		lpfc_printf_log(phba, KERN_INFO, LOG_SLI,
 				"3163 ELS xri-sgl count unchanged: %d\n",
@@ -6177,10 +6222,14 @@ lpfc_reset_hba(struct lpfc_hba *phba)
 		phba->link_state = LPFC_HBA_ERROR;
 		return;
 	}
-	if (phba->sli.sli_flag & LPFC_SLI_ACTIVE)
+
+	/* If not LPFC_SLI_ACTIVE, force all IO to be flushed */
+	if (phba->sli.sli_flag & LPFC_SLI_ACTIVE) {
 		lpfc_offline_prep(phba, LPFC_MBX_WAIT);
-	else
+	} else {
 		lpfc_offline_prep(phba, LPFC_MBX_NO_WAIT);
+		lpfc_sli_flush_io_rings(phba);
+	}
 	lpfc_offline(phba);
 	lpfc_sli_brdrestart(phba);
 	lpfc_online(phba);
@@ -6520,8 +6569,6 @@ lpfc_sli4_driver_resource_setup(struct lpfc_hba *phba)
 	LPFC_MBOXQ_t *mboxq;
 	MAILBOX_t *mb;
 	int rc, i, max_buf_size;
-	uint8_t pn_page[LPFC_MAX_SUPPORTED_PAGES] = {0};
-	struct lpfc_mqe *mqe;
 	int longs;
 	int extra;
 	uint64_t wwn;
@@ -6754,32 +6801,6 @@ lpfc_sli4_driver_resource_setup(struct lpfc_hba *phba)
 	}
 
 	lpfc_nvme_mod_param_dep(phba);
-
-	/* Get the Supported Pages if PORT_CAPABILITIES is supported by port. */
-	lpfc_supported_pages(mboxq);
-	rc = lpfc_sli_issue_mbox(phba, mboxq, MBX_POLL);
-	if (!rc) {
-		mqe = &mboxq->u.mqe;
-		memcpy(&pn_page[0], ((uint8_t *)&mqe->un.supp_pages.word3),
-		       LPFC_MAX_SUPPORTED_PAGES);
-		for (i = 0; i < LPFC_MAX_SUPPORTED_PAGES; i++) {
-			switch (pn_page[i]) {
-			case LPFC_SLI4_PARAMETERS:
-				phba->sli4_hba.pc_sli4_params.supported = 1;
-				break;
-			default:
-				break;
-			}
-		}
-		/* Read the port's SLI4 Parameters capabilities if supported. */
-		if (phba->sli4_hba.pc_sli4_params.supported)
-			rc = lpfc_pc_sli4_params_get(phba, mboxq);
-		if (rc) {
-			mempool_free(mboxq, phba->mbox_mem_pool);
-			rc = -EIO;
-			goto out_free_bsmbx;
-		}
-	}
 
 	/*
 	 * Get sli4 parameters that override parameters from Port capabilities.
@@ -7335,11 +7356,9 @@ lpfc_free_els_sgl_list(struct lpfc_hba *phba)
 	LIST_HEAD(sglq_list);
 
 	/* Retrieve all els sgls from driver list */
-	spin_lock_irq(&phba->hbalock);
-	spin_lock(&phba->sli4_hba.sgl_list_lock);
+	spin_lock_irq(&phba->sli4_hba.sgl_list_lock);
 	list_splice_init(&phba->sli4_hba.lpfc_els_sgl_list, &sglq_list);
-	spin_unlock(&phba->sli4_hba.sgl_list_lock);
-	spin_unlock_irq(&phba->hbalock);
+	spin_unlock_irq(&phba->sli4_hba.sgl_list_lock);
 
 	/* Now free the sgl list */
 	lpfc_free_sgl_list(phba, &sglq_list);
@@ -9607,8 +9626,7 @@ lpfc_sli4_queue_setup(struct lpfc_hba *phba)
 				"3250 QUERY_FW_CFG mailbox failed with status "
 				"x%x add_status x%x, mbx status x%x\n",
 				shdr_status, shdr_add_status, rc);
-		if (rc != MBX_TIMEOUT)
-			mempool_free(mboxq, phba->mbox_mem_pool);
+		mempool_free(mboxq, phba->mbox_mem_pool);
 		rc = -ENXIO;
 		goto out_error;
 	}
@@ -9624,8 +9642,7 @@ lpfc_sli4_queue_setup(struct lpfc_hba *phba)
 			"ulp1_mode:x%x\n", phba->sli4_hba.fw_func_mode,
 			phba->sli4_hba.ulp0_mode, phba->sli4_hba.ulp1_mode);
 
-	if (rc != MBX_TIMEOUT)
-		mempool_free(mboxq, phba->mbox_mem_pool);
+	mempool_free(mboxq, phba->mbox_mem_pool);
 
 	/*
 	 * Set up HBA Event Queues (EQs)
@@ -10223,8 +10240,7 @@ lpfc_pci_function_reset(struct lpfc_hba *phba)
 		shdr_status = bf_get(lpfc_mbox_hdr_status, &shdr->response);
 		shdr_add_status = bf_get(lpfc_mbox_hdr_add_status,
 					 &shdr->response);
-		if (rc != MBX_TIMEOUT)
-			mempool_free(mboxq, phba->mbox_mem_pool);
+		mempool_free(mboxq, phba->mbox_mem_pool);
 		if (shdr_status || shdr_add_status || rc) {
 			lpfc_printf_log(phba, KERN_ERR, LOG_TRACE_EVENT,
 					"0495 SLI_FUNCTION_RESET mailbox "
@@ -10728,17 +10744,19 @@ lpfc_sli_enable_intr(struct lpfc_hba *phba, uint32_t cfg_mode)
 	uint32_t intr_mode = LPFC_INTR_ERROR;
 	int retval;
 
+	/* Need to issue conf_port mbox cmd before conf_msi mbox cmd */
+	retval = lpfc_sli_config_port(phba, LPFC_SLI_REV3);
+	if (retval)
+		return intr_mode;
+	phba->hba_flag &= ~HBA_NEEDS_CFG_PORT;
+
 	if (cfg_mode == 2) {
-		/* Need to issue conf_port mbox cmd before conf_msi mbox cmd */
-		retval = lpfc_sli_config_port(phba, LPFC_SLI_REV3);
+		/* Now, try to enable MSI-X interrupt mode */
+		retval = lpfc_sli_enable_msix(phba);
 		if (!retval) {
-			/* Now, try to enable MSI-X interrupt mode */
-			retval = lpfc_sli_enable_msix(phba);
-			if (!retval) {
-				/* Indicate initialization to MSI-X mode */
-				phba->intr_type = MSIX;
-				intr_mode = 2;
-			}
+			/* Indicate initialization to MSI-X mode */
+			phba->intr_type = MSIX;
+			intr_mode = 2;
 		}
 	}
 
@@ -12020,78 +12038,6 @@ lpfc_sli4_hba_unset(struct lpfc_hba *phba)
 		phba->pport->work_port_events = 0;
 }
 
- /**
- * lpfc_pc_sli4_params_get - Get the SLI4_PARAMS port capabilities.
- * @phba: Pointer to HBA context object.
- * @mboxq: Pointer to the mailboxq memory for the mailbox command response.
- *
- * This function is called in the SLI4 code path to read the port's
- * sli4 capabilities.
- *
- * This function may be be called from any context that can block-wait
- * for the completion.  The expectation is that this routine is called
- * typically from probe_one or from the online routine.
- **/
-int
-lpfc_pc_sli4_params_get(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
-{
-	int rc;
-	struct lpfc_mqe *mqe;
-	struct lpfc_pc_sli4_params *sli4_params;
-	uint32_t mbox_tmo;
-
-	rc = 0;
-	mqe = &mboxq->u.mqe;
-
-	/* Read the port's SLI4 Parameters port capabilities */
-	lpfc_pc_sli4_params(mboxq);
-	if (!phba->sli4_hba.intr_enable)
-		rc = lpfc_sli_issue_mbox(phba, mboxq, MBX_POLL);
-	else {
-		mbox_tmo = lpfc_mbox_tmo_val(phba, mboxq);
-		rc = lpfc_sli_issue_mbox_wait(phba, mboxq, mbox_tmo);
-	}
-
-	if (unlikely(rc))
-		return 1;
-
-	sli4_params = &phba->sli4_hba.pc_sli4_params;
-	sli4_params->if_type = bf_get(if_type, &mqe->un.sli4_params);
-	sli4_params->sli_rev = bf_get(sli_rev, &mqe->un.sli4_params);
-	sli4_params->sli_family = bf_get(sli_family, &mqe->un.sli4_params);
-	sli4_params->featurelevel_1 = bf_get(featurelevel_1,
-					     &mqe->un.sli4_params);
-	sli4_params->featurelevel_2 = bf_get(featurelevel_2,
-					     &mqe->un.sli4_params);
-	sli4_params->proto_types = mqe->un.sli4_params.word3;
-	sli4_params->sge_supp_len = mqe->un.sli4_params.sge_supp_len;
-	sli4_params->if_page_sz = bf_get(if_page_sz, &mqe->un.sli4_params);
-	sli4_params->rq_db_window = bf_get(rq_db_window, &mqe->un.sli4_params);
-	sli4_params->loopbk_scope = bf_get(loopbk_scope, &mqe->un.sli4_params);
-	sli4_params->eq_pages_max = bf_get(eq_pages, &mqe->un.sli4_params);
-	sli4_params->eqe_size = bf_get(eqe_size, &mqe->un.sli4_params);
-	sli4_params->cq_pages_max = bf_get(cq_pages, &mqe->un.sli4_params);
-	sli4_params->cqe_size = bf_get(cqe_size, &mqe->un.sli4_params);
-	sli4_params->mq_pages_max = bf_get(mq_pages, &mqe->un.sli4_params);
-	sli4_params->mqe_size = bf_get(mqe_size, &mqe->un.sli4_params);
-	sli4_params->mq_elem_cnt = bf_get(mq_elem_cnt, &mqe->un.sli4_params);
-	sli4_params->wq_pages_max = bf_get(wq_pages, &mqe->un.sli4_params);
-	sli4_params->wqe_size = bf_get(wqe_size, &mqe->un.sli4_params);
-	sli4_params->rq_pages_max = bf_get(rq_pages, &mqe->un.sli4_params);
-	sli4_params->rqe_size = bf_get(rqe_size, &mqe->un.sli4_params);
-	sli4_params->hdr_pages_max = bf_get(hdr_pages, &mqe->un.sli4_params);
-	sli4_params->hdr_size = bf_get(hdr_size, &mqe->un.sli4_params);
-	sli4_params->hdr_pp_align = bf_get(hdr_pp_align, &mqe->un.sli4_params);
-	sli4_params->sgl_pages_max = bf_get(sgl_pages, &mqe->un.sli4_params);
-	sli4_params->sgl_pp_align = bf_get(sgl_pp_align, &mqe->un.sli4_params);
-
-	/* Make sure that sge_supp_len can be handled by the driver */
-	if (sli4_params->sge_supp_len > LPFC_MAX_SGE_SIZE)
-		sli4_params->sge_supp_len = LPFC_MAX_SGE_SIZE;
-
-	return rc;
-}
-
 /**
  * lpfc_get_sli4_parameters - Get the SLI4 Config PARAMETERS.
  * @phba: Pointer to HBA context object.
@@ -12150,7 +12096,8 @@ lpfc_get_sli4_parameters(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
 	else
 		phba->sli3_options &= ~LPFC_SLI4_PHWQ_ENABLED;
 	sli4_params->sge_supp_len = mbx_sli4_parameters->sge_supp_len;
-	sli4_params->loopbk_scope = bf_get(loopbk_scope, mbx_sli4_parameters);
+	sli4_params->loopbk_scope = bf_get(cfg_loopbk_scope,
+					   mbx_sli4_parameters);
 	sli4_params->oas_supported = bf_get(cfg_oas, mbx_sli4_parameters);
 	sli4_params->cqv = bf_get(cfg_cqv, mbx_sli4_parameters);
 	sli4_params->mqv = bf_get(cfg_mqv, mbx_sli4_parameters);
@@ -14122,15 +14069,32 @@ void lpfc_dmp_dbg(struct lpfc_hba *phba)
 	int i;
 	int j = 0;
 	unsigned long rem_nsec;
+	struct lpfc_vport **vports;
 
+	/* Don't dump messages if we explicitly set log_verbose for the
+	 * physical port or any vport.
+	 */
 	if (phba->cfg_log_verbose)
 		return;
+
+	vports = lpfc_create_vport_work_array(phba);
+	if (vports != NULL) {
+		for (i = 0; i <= phba->max_vpi && vports[i] != NULL; i++) {
+			if (vports[i]->cfg_log_verbose) {
+				lpfc_destroy_vport_work_array(phba, vports);
+				return;
+			}
+		}
+	}
+	lpfc_destroy_vport_work_array(phba, vports);
 
 	if (atomic_cmpxchg(&phba->dbg_log_dmping, 0, 1) != 0)
 		return;
 
 	start_idx = (unsigned int)atomic_read(&phba->dbg_log_idx) % DBG_LOG_SZ;
 	dbg_cnt = (unsigned int)atomic_read(&phba->dbg_log_cnt);
+	if (!dbg_cnt)
+		goto out;
 	temp_idx = start_idx;
 	if (dbg_cnt >= DBG_LOG_SZ) {
 		dbg_cnt = DBG_LOG_SZ;
@@ -14160,6 +14124,7 @@ void lpfc_dmp_dbg(struct lpfc_hba *phba)
 			 rem_nsec / 1000,
 			 phba->dbg_log[temp_idx].log);
 	}
+out:
 	atomic_set(&phba->dbg_log_cnt, 0);
 	atomic_set(&phba->dbg_log_dmping, 0);
 }

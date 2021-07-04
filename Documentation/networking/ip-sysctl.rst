@@ -178,6 +178,27 @@ min_adv_mss - INTEGER
 	The advertised MSS depends on the first hop route MTU, but will
 	never be lower than this setting.
 
+fib_notify_on_flag_change - INTEGER
+        Whether to emit RTM_NEWROUTE notifications whenever RTM_F_OFFLOAD/
+        RTM_F_TRAP/RTM_F_OFFLOAD_FAILED flags are changed.
+
+        After installing a route to the kernel, user space receives an
+        acknowledgment, which means the route was installed in the kernel,
+        but not necessarily in hardware.
+        It is also possible for a route already installed in hardware to change
+        its action and therefore its flags. For example, a host route that is
+        trapping packets can be "promoted" to perform decapsulation following
+        the installation of an IPinIP/VXLAN tunnel.
+        The notifications will indicate to user-space the state of the route.
+
+        Default: 0 (Do not emit notifications.)
+
+        Possible values:
+
+        - 0 - Do not emit notifications.
+        - 1 - Emit notifications.
+        - 2 - Emit notifications only for RTM_F_OFFLOAD_FAILED flag change.
+
 IP Fragmentation:
 
 ipfrag_high_thresh - LONG INTEGER
@@ -630,16 +651,15 @@ tcp_rmem - vector of 3 INTEGERs: min, default, max
 
 	default: initial size of receive buffer used by TCP sockets.
 	This value overrides net.core.rmem_default used by other protocols.
-	Default: 87380 bytes. This value results in window of 65535 with
-	default setting of tcp_adv_win_scale and tcp_app_win:0 and a bit
-	less for default tcp_app_win. See below about these variables.
+	Default: 131072 bytes.
+	This value results in initial window of 65535.
 
 	max: maximal size of receive buffer allowed for automatically
 	selected receiver buffers for TCP socket. This value does not override
 	net.core.rmem_max.  Calling setsockopt() with SO_RCVBUF disables
 	automatic tuning of that socket's receive buffer size, in which
 	case this value is ignored.
-	Default: between 87380B and 6MB, depending on RAM size.
+	Default: between 131072 and 6MB, depending on RAM size.
 
 tcp_sack - BOOLEAN
 	Enable select acknowledgments (SACKS).
@@ -1053,7 +1073,9 @@ ip_local_reserved_ports - list of comma separated ranges
 
 	although this is redundant. However such a setting is useful
 	if later the port range is changed to a value that will
-	include the reserved ports.
+	include the reserved ports. Also keep in mind, that overlapping
+	of these ranges may affect probability of selecting ephemeral
+	ports which are right after block of reserved ports.
 
 	Default: Empty
 
@@ -1122,6 +1144,12 @@ icmp_echo_ignore_all - BOOLEAN
 	requests sent to it.
 
 	Default: 0
+
+icmp_echo_enable_probe - BOOLEAN
+        If set to one, then the kernel will respond to RFC 8335 PROBE
+        requests sent to it.
+
+        Default: 0
 
 icmp_echo_ignore_broadcasts - BOOLEAN
 	If set non-zero, then the kernel will ignore all ICMP ECHO and
@@ -1424,6 +1452,25 @@ rp_filter - INTEGER
 
 	Default value is 0. Note that some distributions enable it
 	in startup scripts.
+
+src_valid_mark - BOOLEAN
+	- 0 - The fwmark of the packet is not included in reverse path
+	  route lookup.  This allows for asymmetric routing configurations
+	  utilizing the fwmark in only one direction, e.g., transparent
+	  proxying.
+
+	- 1 - The fwmark of the packet is included in reverse path route
+	  lookup.  This permits rp_filter to function when the fwmark is
+	  used for routing traffic in both directions.
+
+	This setting also affects the utilization of fmwark when
+	performing source address selection for ICMP replies, or
+	determining addresses stored for the IPOPT_TS_TSANDADDR and
+	IPOPT_RR IP options.
+
+	The max value from conf/{all,interface}/src_valid_mark is used.
+
+	Default value is 0.
 
 arp_filter - BOOLEAN
 	- 1 - Allows you to have multiple network interfaces on the same
@@ -1775,6 +1822,27 @@ nexthop_compat_mode - BOOLEAN
 	and extraneous notifications.
 	Default: true (backward compat mode)
 
+fib_notify_on_flag_change - INTEGER
+        Whether to emit RTM_NEWROUTE notifications whenever RTM_F_OFFLOAD/
+        RTM_F_TRAP/RTM_F_OFFLOAD_FAILED flags are changed.
+
+        After installing a route to the kernel, user space receives an
+        acknowledgment, which means the route was installed in the kernel,
+        but not necessarily in hardware.
+        It is also possible for a route already installed in hardware to change
+        its action and therefore its flags. For example, a host route that is
+        trapping packets can be "promoted" to perform decapsulation following
+        the installation of an IPinIP/VXLAN tunnel.
+        The notifications will indicate to user-space the state of the route.
+
+        Default: 0 (Do not emit notifications.)
+
+        Possible values:
+
+        - 0 - Do not emit notifications.
+        - 1 - Emit notifications.
+        - 2 - Emit notifications only for RTM_F_OFFLOAD_FAILED flag change.
+
 IPv6 Fragmentation:
 
 ip6frag_high_thresh - INTEGER
@@ -1788,21 +1856,6 @@ ip6frag_low_thresh - INTEGER
 
 ip6frag_time - INTEGER
 	Time in seconds to keep an IPv6 fragment in memory.
-
-IPv6 Segment Routing:
-
-seg6_flowlabel - INTEGER
-	Controls the behaviour of computing the flowlabel of outer
-	IPv6 header in case of SR T.encaps
-
-	 == =======================================================
-	 -1  set flowlabel to zero.
-	  0  copy flowlabel from Inner packet in case of Inner IPv6
-	     (Set flowlabel to 0 in case IPv4/L2)
-	  1  Compute the flowlabel using seg6_make_flowlabel()
-	 == =======================================================
-
-	Default is 0.
 
 ``conf/default/*``:
 	Change the interface-specific default settings.
@@ -1882,6 +1935,16 @@ accept_ra_defrtr - BOOLEAN
 
 		- enabled if accept_ra is enabled.
 		- disabled if accept_ra is disabled.
+
+ra_defrtr_metric - UNSIGNED INTEGER
+	Route metric for default route learned in Router Advertisement. This value
+	will be assigned as metric for the default route learned via IPv6 Router
+	Advertisement. Takes affect only if accept_ra_defrtr is enabled.
+
+	Possible values:
+		1 to 0xFFFFFFFF
+
+		Default: IP6_RT_PRIO_USER i.e. 1024.
 
 accept_ra_from_local - BOOLEAN
 	Accept RA with source-address that is found on local machine

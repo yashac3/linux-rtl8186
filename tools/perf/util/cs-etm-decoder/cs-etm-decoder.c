@@ -6,6 +6,7 @@
  * Author: Mathieu Poirier <mathieu.poirier@linaro.org>
  */
 
+#include <linux/coresight-pmu.h>
 #include <linux/err.h>
 #include <linux/list.h>
 #include <linux/zalloc.h>
@@ -316,7 +317,7 @@ cs_etm_decoder__do_hard_timestamp(struct cs_etm_queue *etmq,
 	 * This is the first timestamp we've seen since the beginning of traces
 	 * or a discontinuity.  Since timestamps packets are generated *after*
 	 * range packets have been generated, we need to estimate the time at
-	 * which instructions started by substracting the number of instructions
+	 * which instructions started by subtracting the number of instructions
 	 * executed to the timestamp.
 	 */
 	packet_queue->timestamp = elem->timestamp - packet_queue->instr_count;
@@ -419,19 +420,10 @@ cs_etm_decoder__buffer_range(struct cs_etm_queue *etmq,
 	packet->last_instr_subtype = elem->last_i_subtype;
 	packet->last_instr_cond = elem->last_instr_cond;
 
-	switch (elem->last_i_type) {
-	case OCSD_INSTR_BR:
-	case OCSD_INSTR_BR_INDIRECT:
+	if (elem->last_i_type == OCSD_INSTR_BR || elem->last_i_type == OCSD_INSTR_BR_INDIRECT)
 		packet->last_instr_taken_branch = elem->last_instr_exec;
-		break;
-	case OCSD_INSTR_ISB:
-	case OCSD_INSTR_DSB_DMB:
-	case OCSD_INSTR_WFI_WFE:
-	case OCSD_INSTR_OTHER:
-	default:
+	else
 		packet->last_instr_taken_branch = false;
-		break;
-	}
 
 	packet->last_instr_size = elem->last_instr_sz;
 
@@ -500,13 +492,42 @@ cs_etm_decoder__set_tid(struct cs_etm_queue *etmq,
 			const ocsd_generic_trace_elem *elem,
 			const uint8_t trace_chan_id)
 {
-	pid_t tid;
+	pid_t tid = -1;
+	static u64 pid_fmt;
+	int ret;
 
-	/* Ignore PE_CONTEXT packets that don't have a valid contextID */
-	if (!elem->context.ctxt_id_valid)
+	/*
+	 * As all the ETMs run at the same exception level, the system should
+	 * have the same PID format crossing CPUs.  So cache the PID format
+	 * and reuse it for sequential decoding.
+	 */
+	if (!pid_fmt) {
+		ret = cs_etm__get_pid_fmt(trace_chan_id, &pid_fmt);
+		if (ret)
+			return OCSD_RESP_FATAL_SYS_ERR;
+	}
+
+	/*
+	 * Process the PE_CONTEXT packets if we have a valid contextID or VMID.
+	 * If the kernel is running at EL2, the PID is traced in CONTEXTIDR_EL2
+	 * as VMID, Bit ETM_OPT_CTXTID2 is set in this case.
+	 */
+	switch (pid_fmt) {
+	case BIT(ETM_OPT_CTXTID):
+		if (elem->context.ctxt_id_valid)
+			tid = elem->context.context_id;
+		break;
+	case BIT(ETM_OPT_CTXTID2):
+		if (elem->context.vmid_valid)
+			tid = elem->context.vmid;
+		break;
+	default:
+		break;
+	}
+
+	if (tid == -1)
 		return OCSD_RESP_CONT;
 
-	tid =  elem->context.context_id;
 	if (cs_etm__etmq_set_tid(etmq, tid, trace_chan_id))
 		return OCSD_RESP_FATAL_SYS_ERR;
 
@@ -572,6 +593,8 @@ static ocsd_datapath_resp_t cs_etm_decoder__gen_trace_elem_printer(
 	case OCSD_GEN_TRC_ELEM_EVENT:
 	case OCSD_GEN_TRC_ELEM_SWTRACE:
 	case OCSD_GEN_TRC_ELEM_CUSTOM:
+	case OCSD_GEN_TRC_ELEM_SYNC_MARKER:
+	case OCSD_GEN_TRC_ELEM_MEMTRANS:
 	default:
 		break;
 	}

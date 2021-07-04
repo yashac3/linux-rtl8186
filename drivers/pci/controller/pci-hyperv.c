@@ -473,7 +473,6 @@ struct hv_pcibus_device {
 	struct list_head dr_list;
 
 	struct msi_domain_info msi_info;
-	struct msi_controller msi_chip;
 	struct irq_domain *irq_domain;
 
 	spinlock_t retarget_msi_interrupt_lock;
@@ -1216,7 +1215,7 @@ static void hv_irq_unmask(struct irq_data *data)
 	params = &hbus->retarget_msi_interrupt_params;
 	memset(params, 0, sizeof(*params));
 	params->partition_id = HV_PARTITION_ID_SELF;
-	params->int_entry.source = 1; /* MSI(-X) */
+	params->int_entry.source = HV_INTERRUPT_SOURCE_MSI;
 	hv_set_msi_entry_from_desc(&params->int_entry.msi_entry, msi_desc);
 	params->device_id = (hbus->hdev->dev_instance.b[5] << 24) |
 			   (hbus->hdev->dev_instance.b[4] << 16) |
@@ -1292,7 +1291,7 @@ exit_unlock:
 	 * resumes, hv_pci_restore_msi_state() is able to correctly restore
 	 * the interrupt with the correct affinity.
 	 */
-	if (res && hbus->state != hv_pcibus_removing)
+	if (!hv_result_success(res) && hbus->state != hv_pcibus_removing)
 		dev_err(&hbus->hdev->device,
 			"%s() failed: %#llx", __func__, res);
 
@@ -1458,7 +1457,7 @@ static void hv_compose_msi_msg(struct irq_data *data, struct msi_msg *msg)
 	 * Prevents hv_pci_onchannelcallback() from running concurrently
 	 * in the tasklet.
 	 */
-	tasklet_disable(&channel->callback_event);
+	tasklet_disable_in_atomic(&channel->callback_event);
 
 	/*
 	 * Since this function is called with IRQ locks held, can't
@@ -1714,7 +1713,7 @@ static void prepopulate_bars(struct hv_pcibus_device *hbus)
 	 * resumed and suspended again: see hibernation_snapshot() and
 	 * hibernation_platform_enter().
 	 *
-	 * If the memory enable bit is already set, Hyper-V sliently ignores
+	 * If the memory enable bit is already set, Hyper-V silently ignores
 	 * the below BAR updates, and the related PCI device driver can not
 	 * work, because reading from the device register(s) always returns
 	 * 0xFFFFFFFF.
@@ -1865,9 +1864,6 @@ static int create_root_hv_pci_bus(struct hv_pcibus_device *hbus)
 					    &hbus->resources_for_children);
 	if (!hbus->pci_bus)
 		return -ENODEV;
-
-	hbus->pci_bus->msi = &hbus->msi_chip;
-	hbus->pci_bus->msi->dev = &hbus->hdev->device;
 
 	pci_lock_rescan_remove();
 	pci_scan_child_bus(hbus->pci_bus);

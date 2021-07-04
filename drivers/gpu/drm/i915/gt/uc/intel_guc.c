@@ -579,20 +579,8 @@ int intel_guc_reset_engine(struct intel_guc *guc,
  */
 int intel_guc_resume(struct intel_guc *guc)
 {
-	u32 action[] = {
-		INTEL_GUC_ACTION_EXIT_S_STATE,
-		GUC_POWER_D0,
-	};
-
-	/*
-	 * If GuC communication is enabled but submission is not supported,
-	 * we do not need to resume the GuC but we do need to enable the
-	 * GuC communication on resume (above).
-	 */
-	if (!intel_guc_submission_is_used(guc) || !intel_guc_is_ready(guc))
-		return 0;
-
-	return intel_guc_send(guc, action, ARRAY_SIZE(action));
+	/* XXX: to be implemented with submission interface rework */
+	return 0;
 }
 
 /**
@@ -694,7 +682,7 @@ int intel_guc_allocate_and_map_vma(struct intel_guc *guc, u32 size,
 	if (IS_ERR(vma))
 		return PTR_ERR(vma);
 
-	vaddr = i915_gem_object_pin_map(vma->obj, I915_MAP_WB);
+	vaddr = i915_gem_object_pin_map_unlocked(vma->obj, I915_MAP_WB);
 	if (IS_ERR(vaddr)) {
 		i915_vma_unpin_and_release(&vma, 0);
 		return PTR_ERR(vaddr);
