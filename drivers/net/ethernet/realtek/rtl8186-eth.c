@@ -221,22 +221,25 @@ enum RTL8186_ISR_REGS {
 };
 
 enum RTL8186_IOCMD_REG {
-	RX_MIT = 1,
-	RX_TIMER = 1,
-	RX_FIFO = 2,
-	TX_FIFO = 1,
-	TX_MIT = 1,
-	TX_POLL = 1 << 0, // it's actually TXFNH - high priority enable
-	CMD_CONFIG = 0x3c | RX_MIT << 8 | RX_FIFO << 11 | RX_TIMER << 13 |
-		     TX_MIT << 16 | TX_FIFO << 19, // TODO 0x3c is enabling some bits... DOCUMENT it
-};
+	TXFNH = BIT(0), // High priority DMA-Ethernet transmit enable
+	TXFNL = BIT(1), // Low priority DMA-Ethernet transmit enable
+	MIITXEnable = BIT(2),
+	MIIRxEnable = BIT(3),
+	RxIntMitigation = 1 << 8, /* Setting this to 0 generates endless interrupts */
+	RXFTH = 1 << 11, /* 0 doesn't work, breaks reception of big packets */
+	RxPktTimer = 0 << 13, /* 0 works */
+	TxIntMitigation = 1 << 16, /* Setting this to 0 generates endless interrupts */
+	TXTH = 0 << 19, /* 0 works */
 
-#define RX_INTERRUPTS (RX_OK | RX_ERR | RX_EMPTY | RX_FIFOOVR)
+	// TODO 0x30 undocumented, was in original driver
+	CMD_CONFIG = 0x30 | MIIRxEnable | MIITXEnable | RxIntMitigation |
+					RXFTH | RxPktTimer | TxIntMitigation | TXTH,
+};
 
 // We can't have RX_EMPTY interrupt with NAPI. napi introduces latencies
 // that sometimes make the RX ring full of not-handled-yet packets.
-static const u32 rtl8186_intr_mask = LINK_CHG | RX_OK | RX_ERR | // | RX_FIFOOVR
-				     TX_OK | TX_ERR; // | TX_EMPTY | SW_INT;
+static const u32 rtl8186_intr_mask = LINK_CHG | RX_OK | RX_ERR |
+				     TX_OK | TX_ERR; // SW_INT | RX_FIFOOVR | TX_EMPTY | RX_EMPTY
 
 typedef struct dma_desc {
 	u32 opts1; // status
@@ -706,12 +709,12 @@ static irqreturn_t rtl8186_interrupt(int irq, void *dev_instance)
 		napi_schedule(&cp->rx_napi);
 	}
 
-	if (unlikely(status & TX_ERR)) { // TODO TX_EMPTY sometimes?????
+	if (unlikely(status & TX_ERR)) {
 		printk_ratelimited("%s: tx error. status=0x%04x\n", dev->name,
 				   status);
 	}
 
-	if (unlikely(status & RX_ERR)) {
+	if (unlikely(status & RX_ERR)) { // TODO runt
 		printk_ratelimited("%s: rx error. status=0x%04x\n", dev->name,
 				   status);
 	}
@@ -811,7 +814,7 @@ static int rtl8186_start_xmit_internal(struct sk_buff *skb,
 
 	if (!netdev_xmit_more() || netif_queue_stopped(dev)) {
 		/* The NIC can start transmitting */
-		RTL_W32(IO_CMD, CMD_CONFIG | TX_POLL);
+		RTL_W32(IO_CMD, CMD_CONFIG | TXFNH);
 	}
 
 	/* This work can be done after NIC starts transmission */
