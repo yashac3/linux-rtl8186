@@ -11,7 +11,7 @@
 #define RTL8186_FAST_BRIDGE_HACK 0
 #define RTL8186_PROFILE_FORWARDING 0
 #define RTL8186_PROFILE_RX 0
-#define RTL8186_STOPWATCH 0
+#define RTL8186_RECORD_TIMINGS 0
 
 #define DRV_NAME "rtl8186-eth"
 #define DRV_VERSION "1.0"
@@ -248,6 +248,9 @@ struct ring_info {
 	struct sk_buff *skb;
 };
 
+#define SAVED_SW_SIZE 4096
+#define DUMP_COUNTER 1000000
+
 
 // TODO reorder struct elements for cache performance
 struct re_private {
@@ -279,6 +282,16 @@ struct re_private {
 	struct mii_if_info mii_if;
 	unsigned int phy_type;
 	DMA_DESC *tx_lqring; // TODO remove
+
+#if RTL8186_RECORD_TIMINGS
+	struct {
+		struct rtl8186_stopwatch saved_sw[SAVED_SW_SIZE];
+		int saved_index;
+		struct file *datafile;
+		loff_t datafile_off;
+		int counter;
+	};
+#endif
 };
 
 static int rtl8186_tx(struct re_private *cp, int budget);
@@ -297,70 +310,23 @@ static void mdio_write(struct net_device *dev, int phy_id, int location,
 
 struct net_device *rtl8186_hack_devs[2];
 
+#if RTL8186_RECORD_TIMINGS
+
 static inline u32 rtl8186_time(void)
 {
 	return ~(readl((void *)(unsigned long)0xBD010078)); // T2CNT
 }
 
-static inline u32 clockticks_to_nsec(u32 ticks)
-{
-	return ticks * 45;
-}
-
-static inline u32 clockticks_to_usec(u32 ticks)
-{
-	return (ticks * 45) / 1000;
-}
-
-#if RTL8186_STOPWATCH
-
-struct rtl8186_stopwatch {
-	int is_started;
-	u32 start_time;
-	u32 total;
-};
+#define RTL8186_SW_MAGIC 0xCAFEBABE
 
 static inline void stopwatch_init(struct rtl8186_stopwatch *sw)
 {
-	sw->is_started = 0;
-	sw->start_time = 0;
-	sw->total = 0;
+	sw->magic = RTL8186_SW_MAGIC;
+	sw->ts1 = 0;
+	sw->ts2 = 0;
 }
 
-static inline void stopwatch_start(struct rtl8186_stopwatch *sw)
-{
-	if (sw->is_started) {
-		pr_warn("Tried to start already started stopwatch\n");
-		dump_stack();
-		return;
-	}
-	sw->is_started = 1;
-	sw->start_time = rtl8186_time();
-}
-
-static inline void stopwatch_stop(struct rtl8186_stopwatch *sw)
-{
-	if (!sw->is_started) {
-		pr_warn("Tried to stop already stopped stopwatch\n");
-		dump_stack();
-		return;
-	}
-	sw->total += rtl8186_time() - sw->start_time;
-	sw->is_started = 0;
-}
-
-static inline u32 stopwatch_elapsed(struct rtl8186_stopwatch *sw)
-{
-	if (sw->is_started) {
-		pr_warn("Stopwatch is running!\n");
-		dump_stack();
-		return 0;
-	}
-	return sw->total;
-}
-
-#endif
-
+#endif /* RTL8186_RECORD_TIMINGS */
 
 static inline struct re_private *rtl8186_priv(struct net_device *dev)
 {
@@ -531,6 +497,10 @@ static inline struct sk_buff *rtl8186_alloc_rx_skb(struct re_private *cp)
 	if (((u32)skb->data) & 0x3)
 		skb_reserve(skb, RX_OFFSET);
 
+#if RTL8186_RECORD_TIMINGS
+	stopwatch_init(&skb->rx_sw);
+#endif
+
 	return skb;
 }
 
@@ -574,6 +544,9 @@ static int rtl8186_rx_poll(struct napi_struct *napi, int budget)
 		protocol = (status >> 16) & 0x3;
 
 		skb = cp->rx_skb[rx_tail].skb;
+#if RTL8186_RECORD_TIMINGS
+		skb->rx_sw.ts1 = rtl8186_time();
+#endif
 		/* Try allocating the new SKB fisrt */
 		/* If we got here, it means driver has some data for us */
 		/* On errors, just recycle the same SKB */
@@ -822,6 +795,28 @@ static inline int rtl8186_start_xmit_internal(struct sk_buff *skb,
 
 #if !RTL8186_FAST_BRIDGE_HACK
 	netdev_sent_queue(dev, skb->len); /* for BQL */
+#endif
+
+#if RTL8186_RECORD_TIMINGS
+	if (skb->rx_sw.magic == RTL8186_SW_MAGIC) {
+		skb->rx_sw.ts2 = rtl8186_time();
+		skb->rx_sw.magic = 0;
+
+		cp->saved_sw[cp->saved_index].ts1 = skb->rx_sw.ts1;
+		cp->saved_sw[cp->saved_index].ts2 = skb->rx_sw.ts2;
+
+		++cp->saved_index;
+		if (cp->saved_index == SAVED_SW_SIZE) {
+			if (cp->counter == 0) {
+				int i;
+				for (i = 0; i < SAVED_SW_SIZE; i++) {
+					kernel_write(cp->datafile, &(cp->saved_sw[i].ts1), 8, &cp->datafile_off);
+				}
+			}
+			cp->counter = (cp->counter + 1) % DUMP_COUNTER;
+		}
+		cp->saved_index %= SAVED_SW_SIZE;
+	}
 #endif
 
 	cp->tx_skb[entry].skb = skb;
@@ -1361,6 +1356,22 @@ static int rtl8186_eth_probe(struct platform_device *pdev)
 		rtl8186_hack_devs[1] = dev;
 	}
 
+#if RTL8186_RECORD_TIMINGS
+	{
+		char *datafile_name;
+		if (dev->irq == 4) {
+			datafile_name = "/tmp/data0";
+		} else {
+			datafile_name = "/tmp/data1";
+		}
+
+		cp->datafile = filp_open(datafile_name, O_WRONLY|O_CREAT|O_TRUNC, 0755);
+		if (!cp->datafile) {
+			pr_err("Could not open data file %s\n", datafile_name);
+		}
+	}
+#endif
+
 	return 0;
 
 err_out:
@@ -1373,6 +1384,13 @@ static int rtl8186_eth_remove(struct platform_device *pdev)
 {
 	struct net_device *dev = platform_get_drvdata(pdev);
 	if (dev) {
+#if RTL8186_RECORD_TIMINGS
+		struct re_private *cp = rtl8186_priv(dev);
+		if (cp && cp->datafile) {
+			filp_close(cp->datafile, NULL);
+			cp->datafile = NULL;
+		}
+#endif
 		unregister_netdev(dev);
 		free_netdev(dev);
 		platform_set_drvdata(pdev, NULL);

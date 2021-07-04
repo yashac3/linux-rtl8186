@@ -610,6 +610,14 @@ typedef unsigned int sk_buff_data_t;
 typedef unsigned char *sk_buff_data_t;
 #endif
 
+struct rtl8186_stopwatch {
+	int magic;
+	u32 ts1;
+	u32 ts2;
+	u32 reserved;
+};
+
+
 /**
  *	struct sk_buff - socket buffer
  *	@next: Next buffer in list
@@ -880,6 +888,7 @@ struct sk_buff {
 	__u32			priority;
 	int			skb_iif;
 	__u32			hash;
+	struct rtl8186_stopwatch rx_sw;
 	__be16			vlan_proto;
 	__u16			vlan_tci;
 #if defined(CONFIG_NET_RX_BUSY_POLL) || defined(CONFIG_XPS)
