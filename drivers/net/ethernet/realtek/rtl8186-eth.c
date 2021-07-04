@@ -1331,8 +1331,8 @@ static int rtl8186_eth_probe(struct platform_device *pdev)
 		goto err_out;
 	}
 
-	netif_napi_add(dev, &cp->rx_napi, rtl8186_rx_poll, 64);
-	netif_tx_napi_add(dev, &cp->tx_napi, rtl8186_tx_poll, 64);
+	netif_napi_add(dev, &cp->rx_napi, rtl8186_rx_poll, 32);
+	netif_tx_napi_add(dev, &cp->tx_napi, rtl8186_tx_poll, 32);
 
 	rc = register_netdev(dev);
 	if (rc)
