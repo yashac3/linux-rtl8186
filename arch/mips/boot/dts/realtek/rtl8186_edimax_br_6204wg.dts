@@ -14,7 +14,7 @@
 	};
 
 	chosen {
-		bootargs = "console=ttyS0,38400n8 root=/dev/mtdblock4 rootfstype=squashfs ro";
+		bootargs = "console=ttyS0,38400n8 root=/dev/mtdblock4 rootfstype=squashfs ro no_hash_pointers";
 	};
 
 	flash0: flash@1e000000 {
