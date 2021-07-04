@@ -601,7 +601,7 @@ poly1305_init:
 
 	beqz	$inp,.Lno_key
 
-#if defined(_MIPS_ARCH_MIPS32R6)
+#if defined(_MIPS_ARCH_MIPS32R6) || defined(CONFIG_CPU_NO_LOAD_STORE_LR)
 	andi	$tmp0,$inp,3		# $inp % 4
 	subu	$inp,$inp,$tmp0		# align $inp
 	sll	$tmp0,$tmp0,3		# byte to bit offset
@@ -794,7 +794,7 @@ $code.=<<___;
 
 .align	4
 .Loop:
-#if defined(_MIPS_ARCH_MIPS32R6)
+#if defined(_MIPS_ARCH_MIPS32R6) || defined(CONFIG_CPU_NO_LOAD_STORE_LR)
 	lw	$d0,0($inp)		# load input
 	lw	$d1,4($inp)
 	lw	$d2,8($inp)
